@@ -17,10 +17,10 @@ struct Vertex {
 };
 
 struct Material {
-  glm::vec4 base_color{1};
+  // glm::vec4 base_color{1};
   uint64_t base_color_bindless_handle{};
-  float alpha_cutoff{};
-  glm::vec3 _pad;
+  // float alpha_cutoff{};
+  // glm::vec3 _pad;
 };
 
 enum class AlphaMode {

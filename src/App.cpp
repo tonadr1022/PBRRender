@@ -46,13 +46,14 @@ void App::Run() {
   ResourceManager resource_manager;
   Renderer renderer;
   renderer.Init();
-  Model model = LoadModel(resource_manager, renderer, path);
   Model plane = LoadModel(
       resource_manager, renderer,
       "/home/tony/dep/models/glTF-Sample-Assets/Models/TwoSidedPlane/glTF/TwoSidedPlane.gltf");
+  Model model = LoadModel(resource_manager, renderer, path);
 
-  player_.SetPosition({0, 0, 3});
-  auto submit_instanced = [&](int z) {
+  player_.SetPosition({-10, 15, -10});
+  player_.LookAt({0, 0, 0});
+  auto submit_instanced = [&](int z, const Model& model) {
     glm::vec3 iter{0, 0, z};
     std::vector<glm::mat4> model_matrices;
     constexpr int kHalfLen = 10;
@@ -63,10 +64,9 @@ void App::Run() {
     }
     renderer.SubmitStaticInstancedModel(model, model_matrices);
   };
-  submit_instanced(0);
-  submit_instanced(5);
-  renderer.SubmitStaticModel(model, glm::translate(glm::mat4(1), glm::vec3(0, 0, 8)));
-  renderer.SubmitStaticModel(plane, glm::translate(glm::mat4(1), glm::vec3(0, -4, 0)));
+  renderer.SubmitStaticModel(model, glm::translate(glm::mat4(1), glm::vec3(0, 0, 0)));
+  renderer.SubmitStaticModel(plane, glm::translate(glm::mat4(1), glm::vec3(0, 0, 2)));
+  submit_instanced(5, plane);
 
   Uint64 curr_time = SDL_GetPerformanceCounter();
   Uint64 prev_time = 0;

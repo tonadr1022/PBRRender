@@ -30,9 +30,9 @@ void Renderer::Init() {
 
   index_buffer_32_.Init(100000, sizeof(uint32_t));
   material_ssbo_.Init(300, sizeof(Material));
-  static_dei_cmds_buffer_.Init(sizeof(DrawElementsIndirectCommand) * 20000, GL_DYNAMIC_STORAGE_BIT,
+  static_dei_cmds_buffer_.Init(sizeof(DrawElementsIndirectCommand) * 200, GL_DYNAMIC_STORAGE_BIT,
                                nullptr);
-  static_uniforms_ssbo_.Init(sizeof(DrawCmdUniforms) * 20000, GL_DYNAMIC_STORAGE_BIT, nullptr);
+  static_uniforms_ssbo_.Init(sizeof(DrawCmdUniforms) * 200, GL_DYNAMIC_STORAGE_BIT, nullptr);
 }
 
 AssetHandle Renderer::AllocateMaterial(const Material& material, AlphaMode) {
@@ -41,10 +41,7 @@ AssetHandle Renderer::AllocateMaterial(const Material& material, AlphaMode) {
   uint32_t offset;
   uint32_t mat_handle =
       material_ssbo_.Allocate(1, reinterpret_cast<const void*>(&material), offset);
-  spdlog::info("offset: {}", offset);
-  static int i = 0;
-  material_allocs_map_.emplace(mat_handle, i++);
-  // material_allocs_map_.emplace(mat_handle, offset / sizeof(Material));
+  material_allocs_map_.emplace(mat_handle, offset / sizeof(Material));
   return mat_handle;
 }
 
@@ -92,7 +89,7 @@ namespace {
 size_t static_base_instance = 0;
 }
 
-void Renderer::SubmitStaticInstancedModel(Model& model,
+void Renderer::SubmitStaticInstancedModel(const Model& model,
                                           const std::vector<glm::mat4>& model_matrices) {
   for (const Primitive& primitive : model.primitives) {
     auto mat_it = material_allocs_map_.find(primitive.material_handle);
@@ -103,8 +100,10 @@ void Renderer::SubmitStaticInstancedModel(Model& model,
     std::vector<DrawCmdUniforms> uniforms;
     uniforms.reserve(model_matrices.size());
     for (const auto& model_matrix : model_matrices) {
-      uniforms.emplace_back(
-          DrawCmdUniforms{.model = model_matrix, .material_index = mat_it->second, .pad = {}});
+      uniforms.emplace_back(DrawCmdUniforms{
+          .model = model_matrix,
+          .material_index = mat_it->second,
+      });
     }
     static_uniforms_ssbo_.SubData(uniforms.size(), uniforms.data());
     DrawElementsIndirectCommand mesh_dei_cmd = dei_cmds_map_.at(primitive.mesh_handle);
@@ -123,19 +122,20 @@ void Renderer::ResetStaticDrawCommands() {
 }
 
 void Renderer::SubmitStaticModel(Model& model, const glm::mat4& model_matrix) {
+  // TODO: one alloc after all primtitives
   for (const Primitive& primitive : model.primitives) {
     auto mat_it = material_allocs_map_.find(primitive.material_handle);
     if (mat_it == material_allocs_map_.end()) {
       spdlog::error("material not found");
       continue;
     }
-    DrawCmdUniforms uniform{.model = model_matrix, .material_index = mat_it->second, .pad = {}};
-    spdlog::info("{}", uniform.material_index);
-    static_uniforms_ssbo_.SubData(1, &uniform);
+    DrawCmdUniforms uniform{.model = model_matrix, .material_index = mat_it->second};
     DrawElementsIndirectCommand mesh_dei_cmd = dei_cmds_map_.at(primitive.mesh_handle);
     mesh_dei_cmd.instance_count = 1;
     mesh_dei_cmd.base_instance = static_base_instance;
-    static_base_instance += mesh_dei_cmd.instance_count;
+    static_base_instance++;
+
+    static_uniforms_ssbo_.SubData(1, &uniform);
     static_dei_cmds_buffer_.SubData(1, &mesh_dei_cmd);
     static_allocs_dirty_ = true;
   }

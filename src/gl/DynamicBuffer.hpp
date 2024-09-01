@@ -108,6 +108,12 @@ class DynamicBuffer {
 
       ++num_active_allocs_;
       auto* data = static_cast<DataT*>(glMapNamedBuffer(id_, GL_WRITE_ONLY));
+      if (!data) {
+        spdlog::error("Unable to map buffer");
+        return 0;
+      }
+      // TODO: handle userT
+      data += new_alloc.offset / sizeof(DataT);
       func(data, false);
       glUnmapNamedBuffer(id_);
 
@@ -124,7 +130,6 @@ class DynamicBuffer {
     if constexpr (!std::is_same_v<UserT, NoneT>) {
       size_bytes += count * sizeof(UserT);
     }
-    spdlog::info("{} {} sb, c {} {}", size_bytes, count, sizeof(UserT), sizeof(NoneT));
     // align the size
     size_bytes += (alignment_ - (size_bytes % alignment_)) % alignment_;
     auto smallest_free_alloc = allocs_.end();
@@ -165,7 +170,6 @@ class DynamicBuffer {
     }
 
     ++num_active_allocs_;
-    spdlog::info("alloc: offset- {}, size b {}", new_alloc.offset, size_bytes);
     glNamedBufferSubData(id_, new_alloc.offset, size_bytes, data);
     offset = new_alloc.offset;
     return new_alloc.handle;

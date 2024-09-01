@@ -177,13 +177,18 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
               ->BindlessHandle();
     }
 
-    auto& base_color = gltf_mat.pbrData.baseColorFactor;
+    // auto& base_color = gltf_mat.pbrData.baseColorFactor;
+    // out_model.material_handles.emplace_back(renderer.AllocateMaterial(
+    //     Material{
+    //         .base_color = glm::vec4{base_color[0], base_color[1], base_color[2], base_color[3]},
+    //         .base_color_bindless_handle = base_color_bindless_handle,
+    //         .alpha_cutoff = gltf_mat.alphaCutoff,
+    //         ._pad = {}},
+    //     convert_alpha_mode(gltf_mat.alphaMode)));
     out_model.material_handles.emplace_back(renderer.AllocateMaterial(
         Material{
-            .base_color = glm::vec4{base_color[0], base_color[1], base_color[2], base_color[3]},
             .base_color_bindless_handle = base_color_bindless_handle,
-            .alpha_cutoff = gltf_mat.alphaCutoff,
-            ._pad = {}},
+        },
         convert_alpha_mode(gltf_mat.alphaMode)));
   }
 
@@ -237,6 +242,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
           std::string("TEXCOORD_") + std::to_string(base_color_tex_coord_idx));
       if (tex_coord == gltf_primitive.attributes.end() ||
           !asset.accessors[tex_coord->second].bufferViewIndex.has_value()) {
+        spdlog::info("no tex coords");
         has_tex_coords = false;
       }
       // Allocate the vertices, callback function takes the pointer to the allocation of the mapped
