@@ -1,0 +1,14 @@
+build-*
+.cache
+build
+cmake-*
+out
+.idea
+compile_commands.json
+vcpkg
+.vs
+resources/icons
+resources/worlds/**
+
+imgui.ini
+
