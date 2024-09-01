@@ -22,7 +22,7 @@ class Player {
   Camera& GetCamera();
   FPSCamera& GetFPSCamera();
   OrbitCamera& GetOrbitCamera();
-  CameraMode camera_mode{CameraMode::kFPS};
+  CameraMode camera_mode{CameraMode::kOrbit};
   void LookAt(const glm::vec3& pos);
 
  protected:

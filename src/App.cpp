@@ -4,6 +4,8 @@
 #include <SDL_timer.h>
 #include <imgui.h>
 
+#include <glm/ext/matrix_transform.hpp>
+
 #include "Input.hpp"
 #include "MeshLoader.hpp"
 #include "Renderer.hpp"
@@ -15,6 +17,25 @@ App::App()
     : window_(1600, 900, "PBR Render", [this](SDL_Event& event) { OnEvent(event); }),
       player_(window_) {}
 
+namespace {
+void FreeModel(Renderer& renderer, ResourceManager& resource_manager, Model& model) {
+  for (auto& mat : model.material_handles) {
+    renderer.FreeMaterial(mat);
+  }
+  for (auto& tex : model.texture_handles) {
+    resource_manager.FreeTexture(tex);
+  }
+  model.material_handles.clear();
+  model.texture_handles.clear();
+  for (auto& p : model.primitives) {
+    renderer.FreeMesh(p.mesh_handle);
+  }
+  model.primitives.clear();
+  model.texture_handles.clear();
+  model.material_handles.clear();
+}
+
+}  // namespace
 void App::Run() {
   std::string err;
   std::string warn;
@@ -26,7 +47,26 @@ void App::Run() {
   Renderer renderer;
   renderer.Init();
   Model model = LoadModel(resource_manager, renderer, path);
-  renderer.SubmitStaticModel(model, glm::mat4(1));
+  Model plane = LoadModel(
+      resource_manager, renderer,
+      "/home/tony/dep/models/glTF-Sample-Assets/Models/TwoSidedPlane/glTF/TwoSidedPlane.gltf");
+
+  player_.SetPosition({0, 0, 3});
+  auto submit_instanced = [&](int z) {
+    glm::vec3 iter{0, 0, z};
+    std::vector<glm::mat4> model_matrices;
+    constexpr int kHalfLen = 10;
+    for (iter.x = -kHalfLen; iter.x <= kHalfLen; iter.x += 4) {
+      for (iter.y = -kHalfLen; iter.y <= kHalfLen; iter.y += 4) {
+        model_matrices.emplace_back(glm::translate(glm::mat4(1), iter));
+      }
+    }
+    renderer.SubmitStaticInstancedModel(model, model_matrices);
+  };
+  submit_instanced(0);
+  submit_instanced(5);
+  renderer.SubmitStaticModel(model, glm::translate(glm::mat4(1), glm::vec3(0, 0, 8)));
+  renderer.SubmitStaticModel(plane, glm::translate(glm::mat4(1), glm::vec3(0, -4, 0)));
 
   Uint64 curr_time = SDL_GetPerformanceCounter();
   Uint64 prev_time = 0;
@@ -40,11 +80,14 @@ void App::Run() {
     player_.Update(dt);
 
     glClearColor(0.1, 0.1, 0.1, 1.0);
-    glClear(GL_COLOR_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
     RenderInfo ri{
         .view_matrix = player_.GetCamera().GetView(),
         .projection_matrix = player_.GetCamera().GetProjection(window_.GetAspectRatio(), 75)};
-    renderer.Render(ri);
+    renderer.DrawStaticOpaque(ri);
 
     if (imgui_enabled_) {
       OnImGui();
@@ -53,6 +96,7 @@ void App::Run() {
 
     window_.EndRenderFrame(imgui_enabled_);
   }
+  FreeModel(renderer, resource_manager, model);
 
   gl::ShaderManager::Shutdown();
 }

@@ -20,7 +20,10 @@ class DynamicBuffer {
   }
 
   void Init(uint32_t count, uint32_t alignment, size_t max_size = UINT32_MAX) {
-    uint32_t size_bytes = count * (sizeof(DataT) + sizeof(UserT));
+    uint32_t size_bytes = count * sizeof(DataT);
+    if constexpr (!std::is_same_v<UserT, NoneT>) {
+      size_bytes += count * sizeof(UserT);
+    }
     max_size_ = max_size;
     alignment_ = alignment;
     // align the size
@@ -61,7 +64,10 @@ class DynamicBuffer {
 
   template <typename AllocFunc>
   uint32_t Allocate(uint32_t count, uint32_t& offset, AllocFunc func, UserT user_data = {}) {
-    uint32_t size_bytes = count * (sizeof(DataT) + sizeof(UserT));
+    uint32_t size_bytes = count * sizeof(DataT);
+    if constexpr (!std::is_same_v<UserT, NoneT>) {
+      size_bytes += count * sizeof(UserT);
+    }
     // align the size
     size_bytes += (alignment_ - (size_bytes % alignment_)) % alignment_;
     auto smallest_free_alloc = allocs_.end();
@@ -114,7 +120,11 @@ class DynamicBuffer {
   // Updates the offset parameter
   [[nodiscard]] uint32_t Allocate(uint32_t count, const void* data, uint32_t& offset,
                                   UserT user_data = {}) {
-    uint32_t size_bytes = count * (sizeof(DataT) + sizeof(UserT));
+    uint32_t size_bytes = count * sizeof(DataT);
+    if constexpr (!std::is_same_v<UserT, NoneT>) {
+      size_bytes += count * sizeof(UserT);
+    }
+    spdlog::info("{} {} sb, c {} {}", size_bytes, count, sizeof(UserT), sizeof(NoneT));
     // align the size
     size_bytes += (alignment_ - (size_bytes % alignment_)) % alignment_;
     auto smallest_free_alloc = allocs_.end();
@@ -155,7 +165,8 @@ class DynamicBuffer {
     }
 
     ++num_active_allocs_;
-    { glNamedBufferSubData(id_, new_alloc.offset, size_bytes, data); }
+    spdlog::info("alloc: offset- {}, size b {}", new_alloc.offset, size_bytes);
+    glNamedBufferSubData(id_, new_alloc.offset, size_bytes, data);
     offset = new_alloc.offset;
     return new_alloc.handle;
   }

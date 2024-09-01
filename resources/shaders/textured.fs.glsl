@@ -13,6 +13,8 @@ struct Material {
     vec4 base_color;
     uvec2 tex_handle;
     float alpha_cutoff;
+    // TODO: see if can eliminate
+    vec3 pad;
 };
 
 layout(std430, binding = 1) readonly buffer Materials {
@@ -21,7 +23,7 @@ layout(std430, binding = 1) readonly buffer Materials {
 
 void main() {
     Material mat = materials[fs_in.material_idx];
-    const bool has_base_tex = (mat.tex_handle.x != 0 && mat.tex_handle.y != 0);
+    const bool has_base_tex = (mat.tex_handle.x != 0 || mat.tex_handle.y != 0);
     vec4 base_color_tex = vec4(1);
     if (has_base_tex) {
         base_color_tex = texture(sampler2D(mat.tex_handle), fs_in.tex_coords);

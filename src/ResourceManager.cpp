@@ -5,4 +5,4 @@ gl::Texture* ResourceManager::GetTexture(AssetHandle handle) {
   return it == texture_map_.end() ? nullptr : &it->second;
 }
 
-void ResourceManager::Erase(AssetHandle handle) { texture_map_.erase(handle); }
+void ResourceManager::FreeTexture(AssetHandle handle) { texture_map_.erase(handle); }

@@ -11,6 +11,7 @@ layout(location = 0) out VS_OUT {
 struct UniformData {
     mat4 model;
     uint material_index;
+    uint pad[3];
 };
 
 layout(std430, binding = 0) readonly buffer Uniforms {
@@ -20,7 +21,7 @@ layout(std430, binding = 0) readonly buffer Uniforms {
 uniform mat4 u_vp_matrix;
 
 void main() {
-    UniformData uniform_data = uniforms[gl_DrawID + gl_InstanceID];
+    UniformData uniform_data = uniforms[gl_DrawID + gl_InstanceID + gl_BaseInstance];
     vs_out.tex_coords = a_tex_coords;
     gl_Position = u_vp_matrix * uniform_data.model * vec4(a_position, 1.0);
 }

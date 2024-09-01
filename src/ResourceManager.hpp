@@ -20,7 +20,8 @@ class ResourceManager {
   }
 
   gl::Texture* GetTexture(AssetHandle handle);
-  void Erase(AssetHandle handle);
+  void FreeTexture(AssetHandle handle);
+  uint32_t NumTextures() const { return texture_map_.size(); }
 
  private:
   std::unordered_map<AssetHandle, gl::Texture> texture_map_;

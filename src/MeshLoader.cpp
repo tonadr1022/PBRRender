@@ -182,7 +182,8 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
         Material{
             .base_color = glm::vec4{base_color[0], base_color[1], base_color[2], base_color[3]},
             .base_color_bindless_handle = base_color_bindless_handle,
-            .alpha_cutoff = gltf_mat.alphaCutoff},
+            .alpha_cutoff = gltf_mat.alphaCutoff,
+            ._pad = {}},
         convert_alpha_mode(gltf_mat.alphaMode)));
   }
 
@@ -214,13 +215,14 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
             // TODO: handle no base texture image
             EASSERT(0);
           }
-          // TODO: handle material index for primitive
-          // tex.imageIndex is used
           if (base_color_tex->transform && base_color_tex->transform->texCoordIndex.has_value()) {
             base_color_tex_coord_idx = base_color_tex->transform->texCoordIndex.value();
           } else {
             base_color_tex_coord_idx = material.pbrData.baseColorTexture->texCoordIndex;
           }
+        } else {
+          spdlog::info("no base color for material");
+          // TODO: default texture
         }
       }
 
@@ -230,7 +232,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
         spdlog::info("no position accessor for primitive at path {}", path.string());
         continue;
       }
-      bool has_tex_coords = base_color_tex_coord_idx != 0;
+      bool has_tex_coords = true;
       const auto* tex_coord = gltf_primitive.findAttribute(
           std::string("TEXCOORD_") + std::to_string(base_color_tex_coord_idx));
       if (tex_coord == gltf_primitive.attributes.end() ||
@@ -250,7 +252,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
 
             if (!has_tex_coords) return;
             auto& tex_coord_accessor = asset.accessors[tex_coord->second];
-            fastgltf::iterateAccessorWithIndex<glm::vec3>(
+            fastgltf::iterateAccessorWithIndex<glm::vec2>(
                 asset, tex_coord_accessor,
                 [vertices](glm::vec2 uv, size_t idx) { vertices[idx].uv = uv; });
 

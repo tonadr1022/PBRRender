@@ -67,7 +67,6 @@ void Texture::MakeNonResident() {
 }
 
 void Texture::MakeResident() {
-  spdlog::info("handle bindless: {}", bindless_handle_);
   EASSERT_MSG(!resident_, "Cannot already be resident.");
   glMakeTextureHandleResidentARB(bindless_handle_);
   resident_ = true;

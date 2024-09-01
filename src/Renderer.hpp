@@ -73,7 +73,11 @@ class Renderer {
   void FreeMesh(AssetHandle& handle);
   void FreeMaterial(AssetHandle& handle);
   void SubmitStaticModel(Model& model, const glm::mat4& model_matrix);
-  void Render(const RenderInfo& render_info);
+  void SubmitStaticInstancedModel(Model& model, const std::vector<glm::mat4>& model_matrices);
+  void ResetStaticDrawCommands();
+  void DrawStaticOpaque(const RenderInfo& render_info);
+  uint32_t NumMaterials() const;
+  uint32_t NumMeshes() const;
 
  private:
   struct DrawElementsIndirectCommand {
@@ -101,7 +105,8 @@ class Renderer {
 
   struct DrawCmdUniforms {
     glm::mat4 model;
-    uint64_t material_index;
+    uint32_t material_index;
+    glm::ivec3 pad;
   };
 
   gl::Buffer<DrawCmdUniforms> static_uniforms_ssbo_;
