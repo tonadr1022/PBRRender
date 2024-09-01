@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Player.hpp"
 #include "Window.hpp"
 
 class App {
@@ -12,4 +13,5 @@ class App {
   Window window_;
   bool imgui_enabled_{true};
   void OnImGui() const;
+  Player player_;
 };

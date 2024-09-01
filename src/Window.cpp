@@ -246,8 +246,8 @@ void Window::Shutdown() {
 }
 
 void Window::CenterCursor() {
-  // auto dims = GetWindowSize();
-  // SDL_WarpMouseInWindow(window_, static_cast<float>(dims.x) / 2, static_cast<float>(dims.y) / 2);
+  auto dims = GetWindowSize();
+  SDL_WarpMouseInWindow(window_, static_cast<float>(dims.x) / 2, static_cast<float>(dims.y) / 2);
 }
 
 void Window::SetMouseGrab(bool state) {
@@ -280,9 +280,8 @@ void Window::EnableImGuiInputs() {
 }
 
 float Window::GetAspectRatio() const {
-  return 0;
-  // auto dims = GetWindowSize();
-  // return static_cast<float>(dims.x) / static_cast<float>(dims.y);
+  auto dims = GetWindowSize();
+  return static_cast<float>(dims.x) / static_cast<float>(dims.y);
 }
 
 void Window::SetTitle(std::string_view title) { SDL_SetWindowTitle(window_, title.data()); }

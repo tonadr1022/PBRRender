@@ -1,5 +1,7 @@
 #include "Shader.hpp"
 
+#include <glm/gtc/type_ptr.hpp>
+
 namespace gl {
 
 void Shader::Bind() const {

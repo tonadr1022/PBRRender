@@ -3,6 +3,8 @@
 #include <filesystem>
 
 class Renderer;
+class ResourceManager;
+struct Model;
 
 namespace fastgltf {
 class Mesh;
@@ -10,4 +12,5 @@ class Mesh;
 
 extern bool LoadMesh(fastgltf::Mesh& mesh);
 
-extern void LoadModel(Renderer& renderer, const std::filesystem::path& path);
+[[nodiscard]] extern Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
+                                     const std::filesystem::path& path);

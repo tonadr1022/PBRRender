@@ -21,7 +21,16 @@ set(SOURCES
     MeshLoader.cpp
     Renderer.cpp
     Window.cpp
+    ResourceManager.cpp
+
     gl/OpenGLDebug.cpp
+    gl/Texture.cpp
+    gl/ShaderManager.cpp
+    gl/VertexArray.cpp
+    gl/Shader.cpp
+    Player.cpp
+    camera/FPSCamera.cpp
+    camera/OrbitCamera.cpp
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})

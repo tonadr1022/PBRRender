@@ -6,6 +6,8 @@
 #include <fastgltf/types.hpp>
 
 #include "Renderer.hpp"
+#include "ResourceManager.hpp"
+#include "gl/Texture.hpp"
 #include "pch.hpp"
 #include "stb_image_impl.hpp"
 #include "types.hpp"
@@ -73,71 +75,50 @@ std::optional<fastgltf::Asset> LoadGLTFAsset(const std::filesystem::path& path) 
 
 struct Image {
   unsigned char* data{};
-  int width, height, channels;
-};
-
-struct IndirectDrawCmd {
-  uint32_t count;
-  uint32_t instance_count;
-  uint32_t first_index;
-  uint32_t base_vertex;
-  uint32_t base_instance;
-};
-
-enum class AlphaMode {
-  kOpaque,
-  kBlend,
-};
-struct Material {
-  float alpha_cutoff;
-  AlphaMode alpha_mode;
-  glm::vec4 base_color;
-};
-
-struct Primitive {
-  PrimitiveType type;
+  int width{}, height{}, channels{};
 };
 
 }  // namespace
 
-void LoadModel(Renderer& renderer, const std::filesystem::path& path) {
+Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
+                const std::filesystem::path& path) {
   if (!std::filesystem::exists(path)) {
     spdlog::error("Failed to find {}", path.string());
-    return;
+    return {};
   }
   auto res = LoadGLTFAsset(path);
   if (!res) {
     spdlog::error("Failed to load model: {}", path.string());
-    return;
+    return {};
   }
+  Model out_model;
   auto& asset = res.value();
-  std::vector<Image> image_data;
+
+  // Load images using stb_image
+  std::vector<Image> images;
   for (fastgltf::Image& image : asset.images) {
     std::visit(
         fastgltf::visitor{
             [](auto&) {},
-            [&image_data](fastgltf::sources::URI& file_path) {
+            [&images](fastgltf::sources::URI& file_path) {
               int w, h, channels;
               const std::string path(file_path.uri.path().begin(), file_path.uri.path().end());
               unsigned char* data = stbi_load(path.c_str(), &w, &h, &channels, 4);
-              image_data.emplace_back(
+              images.emplace_back(
                   Image{.data = data, .width = w, .height = h, .channels = channels});
             },
-            [&image_data](fastgltf::sources::Array& vector) {
+            [&images](fastgltf::sources::Array& vector) {
               int w, h, channels;
               unsigned char* data = stbi_load_from_memory(
                   reinterpret_cast<const stbi_uc*>(vector.bytes.data()),
                   static_cast<int>(vector.bytes.size_bytes()), &w, &h, &channels, 4);
-              image_data.emplace_back(
+              images.emplace_back(
                   Image{.data = data, .width = w, .height = h, .channels = channels});
             },
             [&](fastgltf::sources::BufferView& view) {
               auto& buffer_view = asset.bufferViews[view.bufferViewIndex];
               auto& buffer = asset.buffers[buffer_view.bufferIndex];
               std::visit(fastgltf::visitor{
-                             // We only care about VectorWithMime here, because we
-                             // specify LoadExternalBuffers, meaning
-                             // all buffers are already loaded into a vector.
                              [](auto&) {},
                              [&](fastgltf::sources::Array& vector) {
                                int w, h, channels;
@@ -145,7 +126,7 @@ void LoadModel(Renderer& renderer, const std::filesystem::path& path) {
                                    reinterpret_cast<const stbi_uc*>(vector.bytes.data() +
                                                                     buffer_view.byteOffset),
                                    static_cast<int>(buffer_view.byteLength), &w, &h, &channels, 4);
-                               image_data.emplace_back(Image{
+                               images.emplace_back(Image{
                                    .data = data, .width = w, .height = h, .channels = channels});
                              }},
                          buffer.data);
@@ -153,25 +134,27 @@ void LoadModel(Renderer& renderer, const std::filesystem::path& path) {
         image.data);
   }
 
-  // loading into GL textures after since multithreading is possible above
-  std::vector<GLuint> textures;
-
-  auto get_mip_level_count = [](int w, int h) -> GLsizei {
-    return static_cast<GLsizei>(1 + std::floor(std::log2(std::max(w, h))));
-  };
-
-  for (Image& img : image_data) {
-    GLuint tex;
-    glCreateTextures(GL_TEXTURE_2D, 1, &tex);
-    glTextureStorage2D(tex, get_mip_level_count(img.width, img.height), GL_RGBA8, img.width,
-                       img.height);
-    glTextureSubImage2D(tex, 0, 0, 0, img.width, img.height, GL_RGBA, GL_UNSIGNED_BYTE, img.data);
-    glGenerateTextureMipmap(tex);
+  // Load images into GL textures. Doing so separately since multithreading is possible above
+  out_model.texture_handles.reserve(images.size());
+  int i = 0;
+  for (Image& img : images) {
+    out_model.texture_handles.emplace_back(
+        resource_manager.LoadTexture(path.string() + std::to_string(i++),
+                                     gl::Tex2DCreateInfo{.dims = glm::ivec2{img.width, img.height},
+                                                         .wrap_s = GL_REPEAT,
+                                                         .wrap_t = GL_REPEAT,
+                                                         .internal_format = GL_RGBA8,
+                                                         .format = GL_RGBA,
+                                                         .type = GL_UNSIGNED_BYTE,
+                                                         .min_filter = GL_LINEAR,
+                                                         .mag_filter = GL_LINEAR,
+                                                         .data = img.data,
+                                                         .bindless = true,
+                                                         .gen_mipmaps = true}));
     stbi_image_free(img.data);
-    textures.emplace_back(tex);
   }
 
-  auto to_alpha_mode = [](fastgltf::AlphaMode mode) -> AlphaMode {
+  auto convert_alpha_mode = [](fastgltf::AlphaMode mode) -> AlphaMode {
     switch (mode) {
       case fastgltf::AlphaMode::Opaque:
         return AlphaMode::kOpaque;
@@ -181,21 +164,32 @@ void LoadModel(Renderer& renderer, const std::filesystem::path& path) {
     }
   };
 
-  // materials
+  // Load materials
+  out_model.material_handles.reserve(asset.materials.size());
   for (fastgltf::Material& gltf_mat : asset.materials) {
     // TODO: handle base color texture
-    // gltf_mat.pbrData.baseColorTexture;
+    uint64_t base_color_bindless_handle{};
+    if (gltf_mat.pbrData.baseColorTexture.has_value()) {
+      base_color_bindless_handle =
+          resource_manager
+              .GetTexture(
+                  out_model.texture_handles[gltf_mat.pbrData.baseColorTexture->textureIndex])
+              ->BindlessHandle();
+    }
 
     auto& base_color = gltf_mat.pbrData.baseColorFactor;
-    // TODO: handle
-    Material _{.alpha_cutoff = gltf_mat.alphaCutoff,
-               .alpha_mode = to_alpha_mode(gltf_mat.alphaMode),
-               .base_color = glm::vec4{base_color[0], base_color[1], base_color[2], base_color[3]}};
+    out_model.material_handles.emplace_back(renderer.AllocateMaterial(
+        Material{
+            .base_color = glm::vec4{base_color[0], base_color[1], base_color[2], base_color[3]},
+            .base_color_bindless_handle = base_color_bindless_handle,
+            .alpha_cutoff = gltf_mat.alphaCutoff},
+        convert_alpha_mode(gltf_mat.alphaMode)));
   }
 
-  std::vector<Primitive> primitives;
+  // Load primitives
   for (fastgltf::Mesh& mesh : asset.meshes) {
     for (auto& gltf_primitive : mesh.primitives) {
+      Primitive out_primitive;
       auto* position_it = gltf_primitive.findAttribute("POSITION");
       if (position_it == gltf_primitive.attributes.end()) {
         spdlog::error("glTF Mesh does not contain POSITION attribute");
@@ -203,13 +197,15 @@ void LoadModel(Renderer& renderer, const std::filesystem::path& path) {
       }
       EASSERT_MSG(gltf_primitive.indicesAccessor.has_value(), "Must specify to generate indices");
 
-      Primitive prim{.type = static_cast<PrimitiveType>(gltf_primitive.type)};
+      auto primitive_type = static_cast<PrimitiveType>(gltf_primitive.type);
       // bool has_material = false;
       size_t base_color_tex_coord_idx = 0;
       if (gltf_primitive.materialIndex.has_value()) {
         // has_material = true;
         // TODO: add material uniforms idx to primitive
 
+        out_primitive.material_handle =
+            out_model.material_handles[gltf_primitive.materialIndex.value()];
         auto& material = asset.materials[gltf_primitive.materialIndex.value()];
         auto& base_color_tex = material.pbrData.baseColorTexture;
         if (base_color_tex.has_value()) {
@@ -226,8 +222,6 @@ void LoadModel(Renderer& renderer, const std::filesystem::path& path) {
             base_color_tex_coord_idx = material.pbrData.baseColorTexture->texCoordIndex;
           }
         }
-
-        // get the material
       }
 
       // Position
@@ -246,8 +240,8 @@ void LoadModel(Renderer& renderer, const std::filesystem::path& path) {
       // Allocate the vertices, callback function takes the pointer to the allocation of the mapped
       // buffer, and copies the data to it, or returns if the allocator couldn't allocate the size
       // mesh handle returned is then used to allocate indices associated with the mesh
-      uint32_t mesh_handle = renderer.AllocateVertices<Vertex>(
-          position_accessor.count,
+      uint32_t mesh_handle = renderer.AllocateMeshVertices<Vertex>(
+          position_accessor.count, primitive_type,
           [&asset, &position_accessor, &tex_coord, has_tex_coords](Vertex* vertices, bool error) {
             if (error) return;
             fastgltf::iterateAccessorWithIndex<glm::vec3>(
@@ -263,28 +257,30 @@ void LoadModel(Renderer& renderer, const std::filesystem::path& path) {
             // TODO: normals
           });
 
+      // Allocate indices, using mapped index buffer
       auto& index_accessor = asset.accessors[gltf_primitive.indicesAccessor.value()];
       if (!index_accessor.bufferViewIndex.has_value()) {
         spdlog::info("no index accessor buffer view index for primitive at path {}", path.string());
       }
       if (index_accessor.componentType == fastgltf::ComponentType::UnsignedByte ||
           index_accessor.componentType == fastgltf::ComponentType::UnsignedShort) {
-        renderer.AllocateIndices<uint16_t>(
+        renderer.AllocateMeshIndices<uint16_t>(
             mesh_handle, index_accessor.count,
             [&asset, &index_accessor](uint16_t* indices, bool error) {
               if (error) return;
               fastgltf::copyFromAccessor<uint16_t>(asset, index_accessor, indices);
             });
       } else {
-        renderer.AllocateIndices<uint32_t>(
+        renderer.AllocateMeshIndices<uint32_t>(
             mesh_handle, index_accessor.count,
             [&asset, &index_accessor](uint32_t* indices, bool error) {
               if (error) return;
               fastgltf::copyFromAccessor<uint32_t>(asset, index_accessor, indices);
             });
       }
-
-      primitives.emplace_back(prim);
+      out_primitive.mesh_handle = mesh_handle;
+      out_model.primitives.emplace_back(out_primitive);
     }
   }
+  return out_model;
 }

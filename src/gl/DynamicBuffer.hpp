@@ -1,6 +1,7 @@
 #pragma once
 
-#include "InternalTypes.hpp"
+namespace gl {
+
 struct NoneT {};
 
 /*
@@ -19,7 +20,7 @@ class DynamicBuffer {
   }
 
   void Init(uint32_t count, uint32_t alignment, size_t max_size = UINT32_MAX) {
-    uint32_t size_bytes = count * sizeof(DataT);
+    uint32_t size_bytes = count * (sizeof(DataT) + sizeof(UserT));
     max_size_ = max_size;
     alignment_ = alignment;
     // align the size
@@ -60,7 +61,7 @@ class DynamicBuffer {
 
   template <typename AllocFunc>
   uint32_t Allocate(uint32_t count, uint32_t& offset, AllocFunc func, UserT user_data = {}) {
-    uint32_t size_bytes = count * sizeof(DataT);
+    uint32_t size_bytes = count * (sizeof(DataT) + sizeof(UserT));
     // align the size
     size_bytes += (alignment_ - (size_bytes % alignment_)) % alignment_;
     auto smallest_free_alloc = allocs_.end();
@@ -101,8 +102,6 @@ class DynamicBuffer {
 
       ++num_active_allocs_;
       auto* data = static_cast<DataT*>(glMapNamedBuffer(id_, GL_WRITE_ONLY));
-      spdlog::info("nullptr {}", (size_t)data);
-      spdlog::info("{}", sizeof(DataT));
       func(data, false);
       glUnmapNamedBuffer(id_);
 
@@ -113,8 +112,9 @@ class DynamicBuffer {
   }
 
   // Updates the offset parameter
-  [[nodiscard]] uint32_t Allocate(uint32_t size_bytes, void* data, uint32_t& offset,
+  [[nodiscard]] uint32_t Allocate(uint32_t count, const void* data, uint32_t& offset,
                                   UserT user_data = {}) {
+    uint32_t size_bytes = count * (sizeof(DataT) + sizeof(UserT));
     // align the size
     size_bytes += (alignment_ - (size_bytes % alignment_)) % alignment_;
     auto smallest_free_alloc = allocs_.end();
@@ -239,3 +239,5 @@ class DynamicBuffer {
     }
   }
 };
+
+}  // namespace gl
