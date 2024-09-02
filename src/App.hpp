@@ -12,6 +12,6 @@ class App {
  private:
   Window window_;
   bool imgui_enabled_{true};
-  void OnImGui() const;
+  void OnImGui();
   Player player_;
 };

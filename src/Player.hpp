@@ -5,6 +5,7 @@
 #include "camera/FPSCamera.hpp"
 #include "camera/OrbitCamera.hpp"
 
+enum class CameraState { kLocked, kUnfocused, kFocused };
 class Window;
 class Player {
  public:
@@ -13,8 +14,7 @@ class Player {
   virtual void Update(double dt);
   virtual void OnImGui();
   virtual bool OnEvent(const SDL_Event& event);
-  void SetCameraFocused(bool state);
-  [[nodiscard]] bool GetCameraFocused() const;
+  void SetCameraState(CameraState state);
   void SetPosition(const glm::vec3& pos);
   void SetMovementSpeed(float speed);
   [[nodiscard]] float GetMovementSpeed() const;
@@ -26,11 +26,12 @@ class Player {
   void LookAt(const glm::vec3& pos);
 
  protected:
+  CameraState camera_state_;
   Window& window_;
   glm::vec3 position_{0};
   FPSCamera fps_camera_;
   OrbitCamera orbit_camera_;
-  bool camera_focused_{false};
+
   float move_speed_{10.f};
   bool override_movement_{true};
 };

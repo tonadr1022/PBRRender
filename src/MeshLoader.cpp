@@ -5,31 +5,45 @@
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
 
+#include "pch.hpp"
+
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/quaternion.hpp>
+
 #include "Renderer.hpp"
 #include "ResourceManager.hpp"
 #include "gl/Texture.hpp"
-#include "pch.hpp"
 #include "stb_image_impl.hpp"
 #include "types.hpp"
 
-GLuint ToGLFilter(fastgltf::Filter filter) {
-  switch (filter) {
-    case fastgltf::Filter::Linear:
-      return GL_LINEAR;
-    case fastgltf::Filter::Nearest:
-      return GL_NEAREST;
-    case fastgltf::Filter::NearestMipMapLinear:
-      return GL_NEAREST_MIPMAP_LINEAR;
-    case fastgltf::Filter::LinearMipMapNearest:
-      return GL_LINEAR_MIPMAP_NEAREST;
-    case fastgltf::Filter::LinearMipMapLinear:
-      return GL_LINEAR_MIPMAP_LINEAR;
-    case fastgltf::Filter::NearestMipMapNearest:
-      return GL_NEAREST_MIPMAP_NEAREST;
-  }
+namespace {
+
+void DecomposeMatrix(const glm::mat4& m, glm::vec3& pos, glm::quat& rot, glm::vec3& scale) {
+  pos = m[3];
+  for (int i = 0; i < 3; i++) scale[i] = glm::length(glm::vec3(m[i]));
+  const glm::mat3 rot_mtx(glm::vec3(m[0]) / scale[0], glm::vec3(m[1]) / scale[1],
+                          glm::vec3(m[2]) / scale[2]);
+  rot = glm::quat_cast(rot_mtx);
 }
 
-namespace {
+// GLuint ToGLFilter(fastgltf::Filter filter) {
+//   switch (filter) {
+//     case fastgltf::Filter::Linear:
+//       return GL_LINEAR;
+//     case fastgltf::Filter::Nearest:
+//       return GL_NEAREST;
+//     case fastgltf::Filter::NearestMipMapLinear:
+//       return GL_NEAREST_MIPMAP_LINEAR;
+//     case fastgltf::Filter::LinearMipMapNearest:
+//       return GL_LINEAR_MIPMAP_NEAREST;
+//     case fastgltf::Filter::LinearMipMapLinear:
+//       return GL_LINEAR_MIPMAP_LINEAR;
+//     case fastgltf::Filter::NearestMipMapNearest:
+//       return GL_NEAREST_MIPMAP_NEAREST;
+//   }
+// }
 
 std::optional<fastgltf::Asset> LoadGLTFAsset(const std::filesystem::path& path) {
   if (!std::filesystem::exists(path)) {
@@ -44,7 +58,8 @@ std::optional<fastgltf::Asset> LoadGLTFAsset(const std::filesystem::path& path) 
   constexpr auto kOptions =
       fastgltf::Options::DontRequireValidAssetMember | fastgltf::Options::AllowDouble |
       fastgltf::Options::LoadGLBBuffers | fastgltf::Options::LoadExternalBuffers |
-      fastgltf::Options::LoadExternalImages | fastgltf::Options::GenerateMeshIndices;
+      fastgltf::Options::LoadExternalImages | fastgltf::Options::GenerateMeshIndices |
+      fastgltf::Options::DecomposeNodeMatrices;
   fastgltf::GltfDataBuffer data;
   data.loadFromFile(path);
 
@@ -81,7 +96,7 @@ struct Image {
 namespace loader {
 
 Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
-                const std::filesystem::path& path) {
+                const std::filesystem::path& path, float camera_aspect_ratio) {
   if (!std::filesystem::exists(path)) {
     spdlog::error("Failed to find {}", path.string());
     return {};
@@ -97,6 +112,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
   // Load images using stb_image
   std::vector<Image> images;
   images.reserve(asset.images.size());
+  spdlog::info("samplers size: {}", asset.samplers.size());
   for (fastgltf::Image& image : asset.images) {
     std::visit(
         fastgltf::visitor{
@@ -136,26 +152,24 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
   }
 
   // Load images into GL textures. Doing so separately since multithreading is possible above
-  out_model.texture_handles.reserve(images.size());
-  std::vector<std::string> names;
-  int i = 0;
-  for (Image& img : images) {
-    names.emplace_back(path.string() + std::to_string(i++));
-    out_model.texture_handles.emplace_back(
-        resource_manager.Load(path.string() + std::to_string(i++),
-                              gl::Tex2DCreateInfo{.dims = glm::ivec2{img.width, img.height},
-                                                  .wrap_s = GL_REPEAT,
-                                                  .wrap_t = GL_REPEAT,
-                                                  .internal_format = GL_RGBA8,
-                                                  .format = GL_RGBA,
-                                                  .type = GL_UNSIGNED_BYTE,
-                                                  .min_filter = GL_LINEAR,
-                                                  .mag_filter = GL_LINEAR,
-                                                  .data = img.data,
-                                                  .bindless = true,
-                                                  .gen_mipmaps = true}));
-    stbi_image_free(img.data);
-  }
+  out_model.texture_handles.resize(images.size());
+  // for (Image& img : images) {
+  //   names.emplace_back(path.string() + std::to_string(i++));
+  //   out_model.texture_handles.emplace_back(resource_manager.Load<gl::Texture>(
+  //       path.string() + std::to_string(i++),
+  //       gl::Tex2DCreateInfo{.dims = glm::ivec2{img.width, img.height},
+  //                           .wrap_s = GL_REPEAT,
+  //                           .wrap_t = GL_REPEAT,
+  //                           .internal_format = GL_RGBA8,
+  //                           .format = GL_RGBA,
+  //                           .type = GL_UNSIGNED_BYTE,
+  //                           .min_filter = GL_LINEAR,
+  //                           .mag_filter = GL_LINEAR,
+  //                           .data = img.data,
+  //                           .bindless = true,
+  //                           .gen_mipmaps = true}));
+  //   stbi_image_free(img.data);
+  // }
 
   auto convert_alpha_mode = [](fastgltf::AlphaMode mode) -> AlphaMode {
     switch (mode) {
@@ -169,54 +183,103 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
 
   // Load materials
   out_model.material_handles.reserve(asset.materials.size());
+  int num_textures = 0;
 
-  std::vector<size_t> indices;
-  for (fastgltf::Material& gltf_mat : asset.materials) {
-    // TODO: handle base color texture
-    uint64_t base_color_bindless_handle{};
-    uint64_t metallic_roughness_bindless_handle{};
-    uint64_t normal_bindless_handle{};
-    if (gltf_mat.pbrData.baseColorTexture.has_value()) {
-      auto* tex = resource_manager.Get<gl::Texture>(
-          out_model.texture_handles[gltf_mat.pbrData.baseColorTexture->textureIndex]);
-      if (tex) {
-        base_color_bindless_handle = tex->BindlessHandle();
-      }
-      indices.emplace_back(gltf_mat.pbrData.baseColorTexture->textureIndex);
+  auto get_image_name = [&path, &num_textures]() {
+    return path.string() + std::to_string(num_textures++);
+  };
+
+  auto load_texture_into_material = [&get_image_name, &out_model, &images, &asset,
+                                     &resource_manager](uint64_t& out_handle, size_t tex_idx,
+                                                        GLuint internal_format) -> bool {
+    auto& img = images[tex_idx];
+    out_model.texture_handles[tex_idx] = resource_manager.Load<gl::Texture>(
+        get_image_name(), gl::Tex2DCreateInfo{.dims = glm::ivec2{img.width, img.height},
+                                              .wrap_s = GL_REPEAT,
+                                              .wrap_t = GL_REPEAT,
+                                              .internal_format = internal_format,
+                                              .format = GL_RGBA,
+                                              .type = GL_UNSIGNED_BYTE,
+                                              .min_filter = GL_LINEAR,
+                                              .mag_filter = GL_LINEAR,
+                                              .data = img.data,
+                                              .bindless = true,
+                                              .gen_mipmaps = true});
+    auto* tex = resource_manager.Get<gl::Texture>(out_model.texture_handles[tex_idx]);
+    if (tex) {
+      out_handle = tex->BindlessHandle();
+      return true;
     }
-    if (gltf_mat.pbrData.metallicRoughnessTexture.has_value()) {
-      auto* tex = resource_manager.Get<gl::Texture>(
-          out_model.texture_handles[gltf_mat.pbrData.metallicRoughnessTexture->textureIndex]);
-      if (tex) {
-        metallic_roughness_bindless_handle = tex->BindlessHandle();
+    return false;
+  };
+
+  for (fastgltf::Material& gltf_mat : asset.materials) {
+    Material out_mat{};
+    if (gltf_mat.pbrData.baseColorTexture.has_value()) {
+      auto& texture = gltf_mat.pbrData.baseColorTexture.value();
+      // TODO: see if it's possible to have different textures with diff uv scales?
+      if (gltf_mat.pbrData.baseColorTexture->transform) {
+        auto& transform = texture.transform;
+        out_mat.uv_scale = glm::make_vec2(transform->uvScale.data());
+        out_mat.uv_offset = glm::make_vec2(transform->uvOffset.data());
+        out_mat.uv_rotation = transform->rotation;
       }
-      indices.emplace_back(gltf_mat.pbrData.metallicRoughnessTexture->textureIndex);
+      load_texture_into_material(out_mat.base_color_bindless_handle, texture.textureIndex,
+                                 GL_SRGB8_ALPHA8);
+    }
+
+    // has metallic roughness and occlusion and indices are the same -> occlusionRoughnessMetallic
+    if (gltf_mat.pbrData.metallicRoughnessTexture.has_value() &&
+        gltf_mat.occlusionTexture.has_value() &&
+        gltf_mat.pbrData.metallicRoughnessTexture->textureIndex ==
+            gltf_mat.occlusionTexture->textureIndex) {
+      if (load_texture_into_material(out_mat.metallic_roughness_bindless_handle,
+                                     gltf_mat.pbrData.metallicRoughnessTexture->textureIndex,
+                                     GL_RGBA8)) {
+        out_mat.material_flags |= MaterialFlags::kOcclusionRoughnessMetallic;
+      }
+    } else {
+      // metallic roughness
+      if (gltf_mat.pbrData.metallicRoughnessTexture.has_value()) {
+        if (load_texture_into_material(out_mat.metallic_roughness_bindless_handle,
+                                       gltf_mat.pbrData.metallicRoughnessTexture->textureIndex,
+                                       GL_RGBA8)) {
+          out_mat.material_flags |= MaterialFlags::kMetallicRoughness;
+        }
+      }
+      // occlusion
+      if (gltf_mat.occlusionTexture.has_value()) {
+        load_texture_into_material(out_mat.occlusion_handle,
+                                   gltf_mat.occlusionTexture->textureIndex, GL_RGBA8);
+      }
+    }
+
+    if (gltf_mat.emissiveTexture.has_value()) {
+      load_texture_into_material(out_mat.emissive_handle, gltf_mat.emissiveTexture->textureIndex,
+                                 GL_SRGB8_ALPHA8);
     }
     if (gltf_mat.normalTexture.has_value()) {
-      auto* tex = resource_manager.Get<gl::Texture>(
-          out_model.texture_handles[gltf_mat.normalTexture->textureIndex]);
-      if (tex) {
-        normal_bindless_handle = tex->BindlessHandle();
-      }
-      indices.emplace_back(gltf_mat.normalTexture->textureIndex);
-    }
-    if (gltf_mat.occlusionTexture.has_value()) {
-      spdlog::error("unimplemented occlusion texture");
+      load_texture_into_material(out_mat.normal_bindless_handle,
+                                 gltf_mat.normalTexture->textureIndex, GL_RGBA8);
     }
 
     auto& base_color = gltf_mat.pbrData.baseColorFactor;
-    out_model.material_handles.emplace_back(renderer.AllocateMaterial(
-        Material{
-            .base_color = glm::vec4{base_color[0], base_color[1], base_color[2], base_color[3]},
-            .base_color_bindless_handle = base_color_bindless_handle,
-            .metallic_roughness_bindless_handle = metallic_roughness_bindless_handle,
-            .normal_bindless_handle = normal_bindless_handle,
-            .alpha_cutoff = gltf_mat.alphaCutoff,
-        },
-        convert_alpha_mode(gltf_mat.alphaMode)));
+    out_mat.base_color = glm::vec4{base_color[0], base_color[1], base_color[2], base_color[3]};
+    if (gltf_mat.alphaMode == fastgltf::AlphaMode::Mask) {
+      out_mat.material_flags |= MaterialFlags::kAlphaMaskOn;
+      out_mat.alpha_cutoff = gltf_mat.alphaCutoff;
+    }
+    out_mat.metallic_factor = gltf_mat.pbrData.metallicFactor;
+    out_mat.roughness_factor = gltf_mat.pbrData.roughnessFactor;
+    out_mat.emissive_strength = gltf_mat.emissiveStrength;
+    out_mat.emissive_factor = glm::vec4{gltf_mat.emissiveFactor[0], gltf_mat.emissiveFactor[1],
+                                        gltf_mat.emissiveFactor[2], 1};
+    out_model.material_handles.emplace_back(
+        renderer.AllocateMaterial(out_mat, convert_alpha_mode(gltf_mat.alphaMode)));
   }
   // Load primitives
   for (fastgltf::Mesh& mesh : asset.meshes) {
+    Mesh out_mesh;
     for (auto& gltf_primitive : mesh.primitives) {
       Primitive out_primitive;
       auto* position_it = gltf_primitive.findAttribute("POSITION");
@@ -249,8 +312,6 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
             base_color_tex_coord_idx = material.pbrData.baseColorTexture->texCoordIndex;
           }
         } else {
-          spdlog::info("no base color for material");
-          // TODO: default texture
         }
       }
 
@@ -314,33 +375,99 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
       auto& index_accessor = asset.accessors[gltf_primitive.indicesAccessor.value()];
       if (!index_accessor.bufferViewIndex.has_value()) {
         spdlog::info("no index accessor buffer view index for primitive at path {}", path.string());
+        continue;
       }
+
       if (index_accessor.componentType == fastgltf::ComponentType::UnsignedByte ||
           index_accessor.componentType == fastgltf::ComponentType::UnsignedShort) {
-        spdlog::info("16");
-        renderer.AllocateMeshIndices<uint16_t>(
-            mesh_handle, index_accessor.count,
-            [&asset, &index_accessor](uint16_t* indices, bool error) {
-              if (error) {
-                spdlog::error("error loading indices");
-                return;
-              }
-              fastgltf::copyFromAccessor<uint16_t>(asset, index_accessor, indices);
-            });
+        std::vector<uint16_t> indices(index_accessor.count);
+        fastgltf::copyFromAccessor<uint16_t>(asset, index_accessor, indices.data());
+        std::vector<uint32_t> in(index_accessor.count);
+        std::transform(indices.begin(), indices.end(), in.begin(),
+                       [](uint16_t val) { return static_cast<uint32_t>(val); });
+        renderer.AllocateMeshIndices(mesh_handle, in);
       } else {
-        spdlog::info("32");
-        renderer.AllocateMeshIndices<uint32_t>(
-            mesh_handle, index_accessor.count,
-            [&asset, &index_accessor](uint32_t* indices, bool error) {
-              if (error) {
-                spdlog::error("error loading indices");
-                return;
-              }
-              fastgltf::copyFromAccessor<uint32_t>(asset, index_accessor, indices);
-            });
+        std::vector<uint32_t> indices(index_accessor.count);
+        fastgltf::copyFromAccessor<uint32_t>(asset, index_accessor, indices.data());
+        renderer.AllocateMeshIndices(mesh_handle, indices);
       }
+
       out_primitive.mesh_handle = mesh_handle;
-      out_model.primitives.emplace_back(out_primitive);
+      out_mesh.primitives.emplace_back(out_primitive);
+    }
+    out_model.meshes.emplace_back(out_mesh);
+  }
+  if (asset.scenes.size() != 1) {
+    spdlog::error("model loader: multiple scenes not supported");
+  }
+
+  // TODO: child indices are wrong since skipping some nodes
+  for (size_t node_idx : asset.scenes[0].nodeIndices) {
+    auto& gltf_node = asset.nodes[node_idx];
+    glm::quat rotation{};
+    glm::vec3 translation{}, scale{1};
+    if (auto* trs = std::get_if<fastgltf::TRS>(&asset.nodes[node_idx].transform)) {
+      rotation = glm::make_quat(trs->rotation.data());
+      translation = glm::make_vec3(trs->translation.data());
+      scale = glm::make_vec3(trs->scale.data());
+    } else if (std::array<float, 16>* arr =
+                   std::get_if<std::array<float, 16>>(&asset.nodes[node_idx].transform)) {
+      DecomposeMatrix(glm::make_mat4(arr->data()), translation, rotation, scale);
+    }
+
+    if (gltf_node.cameraIndex.has_value()) {
+      // https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#projection-matrices
+      glm::mat4 proj_mat;
+      std::visit(fastgltf::visitor{
+                     [&](fastgltf::Camera::Perspective& perspective) {
+                       float aspect_ratio = perspective.aspectRatio.value_or(camera_aspect_ratio);
+                       proj_mat = glm::mat4{0};
+                       proj_mat[0][0] = 1.f / (aspect_ratio * tan(0.5f * perspective.yfov));
+                       proj_mat[1][1] = 1.f / (tan(0.5f * perspective.yfov));
+                       proj_mat[2][3] = -1;
+
+                       if (perspective.zfar.has_value()) {
+                         // Finite projection proj_matrix
+                         proj_mat[2][2] = (*perspective.zfar + perspective.znear) /
+                                          (perspective.znear - *perspective.zfar);
+                         proj_mat[3][2] = (2 * *perspective.zfar * perspective.znear) /
+                                          (perspective.znear - *perspective.zfar);
+                       } else {
+                         // Infinite projection proj_matrix
+                         proj_mat[2][2] = -1;
+                         proj_mat[3][2] = -2 * perspective.znear;
+                       }
+                     },
+                     [&](fastgltf::Camera::Orthographic& orthographic) {
+                       proj_mat = glm::mat4{1};
+                       proj_mat[0][0] = 1.f / orthographic.xmag;
+                       proj_mat[1][1] = 1.f / orthographic.ymag;
+                       proj_mat[2][2] = 2.f / (orthographic.znear - orthographic.zfar);
+                       proj_mat[3][2] = (orthographic.zfar + orthographic.znear) /
+                                        (orthographic.znear - orthographic.zfar);
+                     },
+                 },
+                 asset.cameras[gltf_node.cameraIndex.value()].camera);
+      glm::mat4 view_matrix =
+          glm::inverse(glm::translate(glm::mat4(1.0f), translation) * glm::toMat4(rotation));
+      out_model.camera_data.emplace_back(proj_mat, view_matrix, translation);
+      continue;
+    }
+    if (!gltf_node.meshIndex.has_value()) {
+      spdlog::info("Non-mesh nodes not supported");
+      continue;
+    }
+    out_model.nodes.emplace_back(SceneNode{
+        .name = std::string(gltf_node.name.begin(), gltf_node.name.end()),
+        .translation = translation,
+        .rotation = rotation,
+        .scale = scale,
+        .child_indices = std::vector<size_t>(gltf_node.children.begin(), gltf_node.children.end()),
+        .idx = node_idx,
+        .mesh_idx = gltf_node.meshIndex.value_or(0)});
+
+    if (!gltf_node.children.empty()) {
+      spdlog::error("unimplemented: nodes have children");
     }
   }
   return out_model;

@@ -9,6 +9,7 @@
 #include "Input.hpp"
 #include "MeshLoader.hpp"
 #include "Path.hpp"
+#include "Player.hpp"
 #include "Renderer.hpp"
 #include "ResourceManager.hpp"
 #include "Window.hpp"
@@ -22,6 +23,8 @@ App::App()
 namespace {
 
 LightsInfo lights_info{.directional_dir = glm::vec3{0, -1, 0}, .directional_color = glm::vec3(1)};
+Model* active_model{};
+int cam_index = -1;
 
 }  // namespace
 
@@ -39,13 +42,15 @@ void App::Run() {
   ResourceManager resource_manager{renderer};
   renderer.Init();
 
-  auto helmet_handle = resource_manager.Load<Model>(path);
-  Model& helmet = *resource_manager.Get<Model>(helmet_handle);
+  // auto helmet_handle = resource_manager.Load<Model>(path);
+  // Model& helmet = *resource_manager.Get<Model>(helmet_handle);
   // auto plane_handle = resource_manager.Load<Model>(
   //     "/home/tony/dep/models/glTF-Sample-Assets/Models/TwoSidedPlane/glTF/TwoSidedPlane.gltf");
   // Model& plane = *resource_manager.Get<Model>(plane_handle);
-  auto sponza_handle = resource_manager.Load<Model>("/home/tony/toycar.glb");
-  // "/home/tony/dep/models/glTF-Sample-Assets/Models/ToyCar/glTF/ToyCar.gltf");
+  auto sponza_handle = resource_manager.Load<Model>(
+      "/home/tony/toycar.glb",
+      // "/home/tony/dep/models/glTF-Sample-Assets/Models/ToyCar/glTF/ToyCar.gltf",
+      window_.GetAspectRatio());
   // auto sponza_handle = resource_manager.Load<Model>("/home/tony/sponza.glb");
   Model& sponza = *resource_manager.Get<Model>(sponza_handle);
 
@@ -63,7 +68,11 @@ void App::Run() {
 
   // renderer.SubmitStaticModel(helmet, glm::translate(glm::mat4(1), glm::vec3(0, 0, 0)));
   // renderer.SubmitStaticModel(plane, glm::translate(glm::mat4(1), glm::vec3(0, 0, 2)));
-  renderer.SubmitStaticModel(sponza, glm::scale(glm::mat4(1), glm::vec3(0.1)));
+  renderer.SubmitStaticModel(sponza, glm::mat4(1));
+  active_model = &sponza;
+  if (!sponza.camera_data.empty()) {
+    cam_index = 0;
+  }
 
   // submit_instanced(5, plane);
 
@@ -74,24 +83,44 @@ void App::Run() {
     prev_time = curr_time;
     curr_time = SDL_GetPerformanceCounter();
     dt = ((curr_time - prev_time) / static_cast<double>(SDL_GetPerformanceFrequency()));
+
+    static double sum = 0;
+    static int frame_counter_count = 0;
+    sum += dt;
+    frame_counter_count++;
+    if (frame_counter_count % 100 == 0) {
+      window_.SetTitle("Frame Time:" + std::to_string(sum / frame_counter_count) +
+                       ", FPS: " + std::to_string(frame_counter_count / sum));
+      frame_counter_count = 0;
+      sum = 0;
+    }
+
     window_.PollEvents();
     window_.StartRenderFrame(imgui_enabled_);
     player_.Update(dt);
+    RenderInfo render_info;
+    if (cam_index != -1 && active_model != nullptr) {
+      CameraData& cam = active_model->camera_data[cam_index];
+      player_.camera_mode = Player::CameraMode::kFPS;
+      player_.SetCameraState(CameraState::kLocked);
+      render_info.view_matrix = cam.view_matrix;
+      render_info.projection_matrix = cam.proj_matrix;
+      render_info.view_pos = cam.view_pos;
+    } else {
+      render_info.view_matrix = player_.GetCamera().GetView();
+      render_info.projection_matrix =
+          player_.GetCamera().GetProjection(window_.GetAspectRatio(), 75);
+      render_info.view_pos = player_.Position();
+    }
 
     glClearColor(0.1, 0.1, 0.1, 1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-    RenderInfo render_info{
-        .view_matrix = player_.GetCamera().GetView(),
-        .projection_matrix = player_.GetCamera().GetProjection(window_.GetAspectRatio(), 75),
-        .view_pos = player_.Position()};
 
     auto shader = gl::ShaderManager::Get().GetShader("textured").value();
     shader.Bind();
-    // shader.SetVec3("u_directional_dir", lights_info.directional_dir);
-    // shader.SetVec3("u_directional_color", lights_info.directional_color);
+    shader.SetVec3("u_directional_dir", lights_info.directional_dir);
+    shader.SetVec3("u_directional_color", lights_info.directional_color);
     renderer.DrawStaticOpaque(render_info);
 
     if (imgui_enabled_) {
@@ -131,9 +160,25 @@ void App::OnEvent(SDL_Event& event) {
   }
 }
 
-void App::OnImGui() const {
+void App::OnImGui() {
   ImGui::Begin("Test");
   ImGui::ColorEdit3("Directional Color", &lights_info.directional_color.x);
   ImGui::SliderFloat3("Directional Direction", &lights_info.directional_dir.x, -1, 1);
+  bool vsync = window_.GetVsync();
+  if (ImGui::Checkbox("Vsync", &vsync)) {
+    window_.SetVsync(vsync);
+  }
+  ImGui::Text("Cam Index: %i", cam_index);
+  if (active_model) {
+    size_t i = 0;
+    for (auto& cam : active_model->camera_data) {
+      ImGui::PushID(&cam);
+      if (ImGui::Button("Camera")) {
+        cam_index = i;
+      }
+      i++;
+      ImGui::PopID();
+    }
+  }
   ImGui::End();
 }

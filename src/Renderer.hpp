@@ -65,7 +65,28 @@ class Renderer {
     return mesh_handle;
   }
 
-  template <typename IndexType, typename AllocFunc>
+  void AllocateMeshIndices(AssetHandle mesh_handle, std::vector<uint32_t>& indices) {
+    auto alloc_it = mesh_allocs_map_.find(mesh_handle);
+    if (alloc_it == mesh_allocs_map_.end()) {
+      spdlog::error(
+          "mesh alloc not found. Must allocate vertices first and use the returned handle");
+      EASSERT(0);
+    }
+    if (alloc_it->second.index_handle != 0) {
+      // TODO: decide whether it's better to free?
+      spdlog::error("mesh alloc already has an index allocation");
+      return;
+    }
+    uint32_t offset;
+    alloc_it->second.index_handle = index_buffer_.Allocate(indices.size(), indices.data(), offset);
+
+    auto dei_it = dei_cmds_map_.find(mesh_handle);
+    EASSERT(dei_it != dei_cmds_map_.end());
+    dei_it->second.first_index = offset / sizeof(uint32_t);
+    dei_it->second.count = indices.size();
+  }
+
+  template <typename AllocFunc>
   void AllocateMeshIndices(AssetHandle mesh_handle, uint32_t count, AllocFunc func) {
     auto alloc_it = mesh_allocs_map_.find(mesh_handle);
     if (alloc_it == mesh_allocs_map_.end()) {
@@ -79,20 +100,11 @@ class Renderer {
       return;
     }
     uint32_t offset;
-    if constexpr (std::is_same_v<IndexType, uint32_t>) {
-      alloc_it->second.index_handle = index_buffer_32_.Allocate(count, offset, func);
-      alloc_it->second.index_buffer_idx = 1;
-    } else if constexpr (std::is_same_v<IndexType, uint16_t>) {
-      alloc_it->second.index_handle = index_buffer_16_.Allocate(count, offset, func);
-      alloc_it->second.index_buffer_idx = 0;
-    } else {
-      spdlog::error("Index type must be uint32_t");
-      EASSERT(0);
-    }
+    alloc_it->second.index_handle = index_buffer_.Allocate(count, offset, func);
 
     auto dei_it = dei_cmds_map_.find(mesh_handle);
     EASSERT(dei_it != dei_cmds_map_.end());
-    dei_it->second.first_index = offset / sizeof(IndexType);
+    dei_it->second.first_index = offset / sizeof(uint32_t);
     dei_it->second.count = count;
   }
 
@@ -100,7 +112,7 @@ class Renderer {
   void FreeMesh(AssetHandle& handle);
   void FreeMaterial(AssetHandle& handle);
   void SubmitStaticModel(Model& model, const glm::mat4& model_matrix);
-  void SubmitStaticInstancedModel(const Model& model, const std::vector<glm::mat4>& model_matrices);
+  void SubmitStaticInstancedModel(const Mesh& mesh, const std::vector<glm::mat4>& model_matrices);
   void ResetStaticDrawCommands();
   void DrawStaticOpaque(const RenderInfo& render_info);
   uint32_t NumMaterials() const;
@@ -122,19 +134,13 @@ class Renderer {
 
   gl::Buffer<UBOUniforms> uniform_ubo_;
   gl::DynamicBuffer<Vertex> pos_tex_vbo_;
-  gl::VertexArray pos_tex_16_vao_;
-  gl::VertexArray pos_tex_32_vao_;
-  gl::DynamicBuffer<uint32_t> index_buffer_32_;
-  gl::DynamicBuffer<uint16_t> index_buffer_16_;
+  gl::VertexArray pos_tex_vao_;
+  gl::DynamicBuffer<uint32_t> index_buffer_;
   gl::DynamicBuffer<Material> material_ssbo_;
 
   struct VertexIndexAlloc {
     uint32_t vertex_handle{};
     uint32_t index_handle{};
-    // indices pointing the proper buffers to free from
-    uint16_t vertex_buffer_idx{};
-    // 0 for uint16_t, 1 for uint32_t
-    uint16_t index_buffer_idx{};
   };
 
   // NEED alignas 16 to match GPU padding... 30 minutes wasted, skill issue!
@@ -144,10 +150,8 @@ class Renderer {
     uint32_t material_index;
   };
 
-  gl::Buffer<DrawCmdUniforms> static_16_bit_idx_uniforms_ssbo_;
-  gl::Buffer<DrawElementsIndirectCommand> static_16_bit_idx_dei_cmds_buffer_;
-  gl::Buffer<DrawCmdUniforms> static_32_bit_idx_uniforms_ssbo_;
-  gl::Buffer<DrawElementsIndirectCommand> static_32_bit_idx_dei_cmds_buffer_;
+  gl::Buffer<DrawCmdUniforms> static_uniforms_ssbo_;
+  gl::Buffer<DrawElementsIndirectCommand> static_dei_cmds_buffer_;
   bool static_allocs_dirty_{true};
 
   std::unordered_map<AssetHandle, uint32_t> material_allocs_map_;

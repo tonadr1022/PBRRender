@@ -12,8 +12,8 @@
 #include "camera/FPSCamera.hpp"
 
 Player::Player(Window& window) : window_(window) {
-  SDL_SetRelativeMouseMode(camera_focused_ ? SDL_TRUE : SDL_FALSE);
-  if (camera_focused_) {
+  SDL_SetRelativeMouseMode(camera_state_ == CameraState::kFocused ? SDL_TRUE : SDL_FALSE);
+  if (camera_state_ == CameraState::kFocused) {
     Window::DisableImGuiInputs();
   } else {
     Window::EnableImGuiInputs();
@@ -32,7 +32,7 @@ float Player::GetMovementSpeed() const { return move_speed_; }
 void Player::SetMovementSpeed(float speed) { move_speed_ = std::max(speed, 1.f); }
 
 void Player::Update(double dt) {
-  if (!camera_focused_ && !override_movement_) return;
+  if (camera_state_ != CameraState::kFocused && !override_movement_) return;
   if (camera_mode == CameraMode::kFPS) {
     fps_camera_.SetPosition(position_);
     float movement_offset = move_speed_ * dt;
@@ -60,9 +60,9 @@ void Player::Update(double dt) {
       position_ += movement;
     }
 
-    if (camera_focused_) fps_camera_.Update(window_);
+    if (camera_state_ == CameraState::kFocused) fps_camera_.Update(window_);
   } else {
-    if (camera_focused_) {
+    if (camera_state_ == CameraState::kFocused) {
       orbit_camera_.Update(window_);
     }
   }
@@ -72,7 +72,6 @@ void Player::OnImGui() {
   ImGui::Begin("Player", nullptr,
                ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoFocusOnAppearing);
   ImGui::Text("Position %f, %f, %f", position_.x, position_.y, position_.z);
-  ImGui::Text("Camera Focused: %s", camera_focused_ ? "true" : "false");
   ImGui::SliderFloat("Move Speed", &move_speed_, 1.f, 300.f);
   if (camera_mode == CameraMode::kFPS) {
     if (ImGui::CollapsingHeader("FPS Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -91,7 +90,7 @@ bool Player::OnEvent(const SDL_Event& event) {
       switch (event.key.keysym.sym) {
         case SDLK_f:
           if (event.key.keysym.mod & KMOD_ALT) {
-            SetCameraFocused(!camera_focused_);
+            camera_state_ = static_cast<CameraState>((static_cast<int>(camera_state_) + 1) % 3);
             return true;
           }
         case SDLK_m:
@@ -112,12 +111,10 @@ bool Player::OnEvent(const SDL_Event& event) {
   return orbit_camera_.OnEvent(event);
 }
 
-bool Player::GetCameraFocused() const { return camera_focused_; }
-
-void Player::SetCameraFocused(bool state) {
-  camera_focused_ = state;
-  SDL_SetRelativeMouseMode(camera_focused_ ? SDL_TRUE : SDL_FALSE);
-  if (camera_focused_) {
+void Player::SetCameraState(CameraState state) {
+  camera_state_ = state;
+  SDL_SetRelativeMouseMode(camera_state_ == CameraState::kFocused ? SDL_TRUE : SDL_FALSE);
+  if (camera_state_ == CameraState::kFocused) {
     Window::DisableImGuiInputs();
   } else {
     Window::EnableImGuiInputs();

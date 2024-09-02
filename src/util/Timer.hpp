@@ -1,11 +1,12 @@
 #pragma once
 
 #include <chrono>
+#include <iostream>
 
 class Timer {
  public:
   Timer() { Start(); }
-  ~Timer() { ElapsedMicro(); }
+  virtual ~Timer() = default;
 
   void Start() { start_time_ = std::chrono::high_resolution_clock::now(); };
 
@@ -25,4 +26,9 @@ class Timer {
  private:
   uint64_t start_, end_;
   std::chrono::time_point<std::chrono::high_resolution_clock> start_time_;
+};
+
+class PrintTimer : public Timer {
+ public:
+  ~PrintTimer() override { std::cout << "Elapsed MS: " << ElapsedMS() << '\n'; }
 };

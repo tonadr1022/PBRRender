@@ -17,14 +17,27 @@ layout(std140, binding = 0) uniform UBOUniforms {
     vec3 view_pos;
 };
 
+#define MATERIAL_FLAG_NONE 1 << 0
+#define MATERIAL_FLAG_METALLIC_ROUGHNESS 1 << 1
+#define MATERIAL_FLAG_OCCLUSION_ROUGHNESS_METALLIC 1 << 2
+#define MATERIAL_FLAG_ALPHA_MODE_MASK 1 << 3
+
 struct Material {
     vec4 base_color;
+    vec4 emissive_factor;
+    vec2 uv_scale;
+    vec2 uv_offset;
     uint64_t base_color_handle;
     uint64_t metallic_roughness_handle;
+    uint64_t occlusion_handle;
     uint64_t normal_handle;
+    uint64_t emissive_handle;
+    float metallic_factor;
+    float roughness_factor;
+    float emissive_strength;
     float alpha_cutoff;
-    // TODO: see if can eliminate
-    // vec3 pad;
+    float uv_rotation;
+    uint material_flags;
 };
 
 layout(std430, binding = 1) readonly buffer Materials {
@@ -40,31 +53,44 @@ float GeometrySchlickGGX(float NdotV, float roughness);
 float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness);
 const float PI = 3.14159265358979323846;
 
+vec2 CalculateUV(Material mat, vec2 uv) {
+    mat2 rotation_mat2 = mat2(
+            cos(mat.uv_rotation), -sin(mat.uv_rotation),
+            sin(mat.uv_rotation), cos(mat.uv_rotation)
+        );
+    return rotation_mat2 * uv * mat.uv_scale + mat.uv_offset;
+}
 void main() {
     Material mat = materials[fs_in.material_idx];
-    // const bool has_base_tex = (mat.tex_handle.x != 0 || mat.tex_handle.y != 0);
-    const bool has_base_tex = mat.base_color_handle != 0;
-    const bool has_metallic_roughness_tex = mat.metallic_roughness_handle != 0;
-    const bool has_normal_tex = mat.normal_handle != 0;
-    vec4 base_color = vec4(1);
-    float roughness = 0;
-    float metallic = 0;
-    if (has_base_tex) {
-        base_color = texture(sampler2D(mat.base_color_handle), fs_in.tex_coords);
-        if (base_color.a < mat.alpha_cutoff) {
+    vec2 uv = CalculateUV(mat, fs_in.tex_coords);
+    vec4 base_color = mat.base_color;
+    float roughness = mat.roughness_factor;
+    float metallic = mat.metallic_factor;
+    float occlusion = 0;
+    vec3 normal;
+
+    if (mat.base_color_handle != 0) {
+        base_color *= texture(sampler2D(mat.base_color_handle), uv);
+        if ((mat.material_flags & MATERIAL_FLAG_ALPHA_MODE_MASK) != 0 && base_color.a < mat.alpha_cutoff) {
             discard;
         }
     }
-
-    if (has_metallic_roughness_tex) {
-        vec4 metallic_roughness_tex = texture(sampler2D(mat.metallic_roughness_handle), fs_in.tex_coords);
-        metallic = metallic_roughness_tex.r;
-        roughness = metallic_roughness_tex.g;
+    if (mat.metallic_roughness_handle != 0 && (mat.material_flags & MATERIAL_FLAG_METALLIC_ROUGHNESS) != 0) {
+        vec4 metallic_roughness_tex = texture(sampler2D(mat.metallic_roughness_handle), uv);
+        metallic *= metallic_roughness_tex.r;
+        roughness *= metallic_roughness_tex.g;
+    } else if (mat.metallic_roughness_handle != 0
+            && (mat.material_flags & MATERIAL_FLAG_OCCLUSION_ROUGHNESS_METALLIC) != 0) {
+        vec4 occ_rough_metallic_tex = texture(sampler2D(mat.metallic_roughness_handle), uv);
+        occlusion = occ_rough_metallic_tex.r;
+        metallic *= occ_rough_metallic_tex.b;
+        roughness *= occ_rough_metallic_tex.g;
     }
-
-    vec3 normal;
-    if (has_normal_tex) {
-        normal = texture(sampler2D(mat.normal_handle), fs_in.tex_coords).rgb;
+    if (mat.occlusion_handle != 0) {
+        occlusion = texture(sampler2D(mat.metallic_roughness_handle), uv).r;
+    }
+    if (mat.normal_handle != 0) {
+        normal = texture(sampler2D(mat.normal_handle), uv).rgb;
         // transform to [-1,1]
         normal = normal * 2.0 - 1.0;
         // apply TBN matrix: tangent space -> world space
@@ -74,7 +100,6 @@ void main() {
     }
 
     vec3 V = normalize(view_pos - fs_in.pos_world_space);
-
     // reflectance at normal incidence
     // 0.04 for dielectrics, higher for metals
     vec3 F0 = vec3(0.04);
@@ -106,8 +131,15 @@ void main() {
     // scale light by NdotL
     float NdotL = max(dot(normal, L), 0.0);
     vec3 directional_out = ((kD * base_color.rgb / PI + specular) * radiance * NdotL);
-    o_color = vec4(directional_out, base_color.a);
-    o_color = base_color;
+
+    vec3 emissive = mat.emissive_factor.rgb * mat.emissive_strength;
+    if (mat.emissive_handle != 0) {
+        emissive *= texture(sampler2D(mat.emissive_handle), uv).rgb;
+    }
+    vec3 color = directional_out + emissive;
+    // color = color / (color + vec3(1.0));
+    // color = pow(color, vec3(1.0 / 2.2));
+    o_color = vec4(color, base_color.a);
 }
 
 // F0: surface reflection at zero incidence - how much surface reflects if looking directly at the surface.

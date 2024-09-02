@@ -16,30 +16,22 @@ class ResourceManager {
  public:
   explicit ResourceManager(Renderer& renderer) : renderer_(renderer){};
 
-  template <typename ParamT>
-  [[nodiscard]] AssetHandle Load(const std::string& name, ParamT&& params) {
+  template <SupportedResource T, typename ParamT>
+  [[nodiscard]] AssetHandle Load(const std::string& path_or_name, ParamT&& params) {
     std::hash<std::string> hash;
-    AssetHandle handle = hash(name);
-
-    auto it = texture_map_.find(handle);
-    if (it != texture_map_.end()) {
-      spdlog::info("reloading texture {}", name);
-    }
-    texture_map_.try_emplace(handle, std::forward<ParamT>(params));
-    return handle;
-  }
-
-  template <SupportedResource T>
-    requires std::same_as<T, Model>
-  [[nodiscard]] AssetHandle Load(const std::string& path) {
-    std::hash<std::string> hash;
-    AssetHandle handle = hash(path);
+    AssetHandle handle = hash(path_or_name);
     if constexpr (std::is_same_v<T, Model>) {
       auto it = model_map_.find(handle);
       if (it != model_map_.end()) {
-        spdlog::info("reloading model {}", path);
+        spdlog::info("reloading model {}", path_or_name);
       }
-      model_map_.try_emplace(handle, loader::LoadModel(*this, renderer_, path));
+      model_map_.try_emplace(handle, loader::LoadModel(*this, renderer_, path_or_name, params));
+    } else if constexpr (std::is_same_v<T, gl::Texture>) {
+      auto it = texture_map_.find(handle);
+      if (it != texture_map_.end()) {
+        spdlog::info("reloading texture {}", path_or_name);
+      }
+      texture_map_.try_emplace(handle, std::forward<ParamT>(params));
     }
     return handle;
   }

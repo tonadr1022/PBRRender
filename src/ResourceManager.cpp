@@ -9,7 +9,9 @@ void ResourceManager::FreeModel(Model& model) {
   for (auto& tex : model.texture_handles) {
     Free<gl::Texture>(tex);
   }
-  for (auto& p : model.primitives) {
-    renderer_.FreeMesh(p.mesh_handle);
+  for (auto& mesh : model.meshes) {
+    for (auto& primitive : mesh.primitives) {
+      renderer_.FreeMesh(primitive.mesh_handle);
+    }
   }
 }

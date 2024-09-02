@@ -13,5 +13,5 @@ class Mesh;
 namespace loader {
 
 [[nodiscard]] extern Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
-                                     const std::filesystem::path& path);
+                                     const std::filesystem::path& path, float camera_aspect_ratio);
 }  // namespace loader
