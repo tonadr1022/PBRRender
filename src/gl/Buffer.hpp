@@ -12,10 +12,10 @@ class Buffer {
     if (id_) glDeleteBuffers(1, &id_);
   }
 
-  void Init(uint32_t size_bytes, GLbitfield flags, const void* data) {
+  void Init(uint32_t count, GLbitfield flags, const void* data) {
     if (id_) glDeleteBuffers(1, &id_);
     glCreateBuffers(1, &id_);
-    glNamedBufferStorage(id_, size_bytes, data, flags);
+    glNamedBufferStorage(id_, count * sizeof(T), data, flags);
   }
 
   Buffer(Buffer&& other) noexcept { *this = std::move(other); }
@@ -34,7 +34,7 @@ class Buffer {
   void SubDataStart(size_t count, void* data) {
     glNamedBufferSubData(id_, 0, count * sizeof(T), data);
     num_allocs_ = count;
-    offset_ += count * sizeof(T);
+    offset_ = count * sizeof(T);
   }
 
   void SubData(size_t count, void* data) {
@@ -48,7 +48,10 @@ class Buffer {
     return glMapNamedBuffer(id_, access);
   }
 
-  void ResetOffset() { offset_ = 0; }
+  void ResetOffset() {
+    offset_ = 0;
+    num_allocs_ = 0;
+  }
   void SetOffset(uint32_t offset) { offset_ = offset; }
 
   [[nodiscard]] void* MapRange(uint32_t offset, uint32_t length_bytes, GLbitfield access) const {

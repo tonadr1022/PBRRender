@@ -1,8 +1,15 @@
 #include "ResourceManager.hpp"
 
-gl::Texture* ResourceManager::GetTexture(AssetHandle handle) {
-  auto it = texture_map_.find(handle);
-  return it == texture_map_.end() ? nullptr : &it->second;
-}
+#include "Renderer.hpp"
 
-void ResourceManager::FreeTexture(AssetHandle handle) { texture_map_.erase(handle); }
+void ResourceManager::FreeModel(Model& model) {
+  for (auto& mat : model.material_handles) {
+    renderer_.FreeMaterial(mat);
+  }
+  for (auto& tex : model.texture_handles) {
+    Free<gl::Texture>(tex);
+  }
+  for (auto& p : model.primitives) {
+    renderer_.FreeMesh(p.mesh_handle);
+  }
+}

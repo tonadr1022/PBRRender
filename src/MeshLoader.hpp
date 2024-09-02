@@ -10,7 +10,8 @@ namespace fastgltf {
 class Mesh;
 }
 
-extern bool LoadMesh(fastgltf::Mesh& mesh);
+namespace loader {
 
 [[nodiscard]] extern Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
                                      const std::filesystem::path& path);
+}  // namespace loader

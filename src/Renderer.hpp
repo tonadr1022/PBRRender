@@ -8,11 +8,38 @@
 struct RenderInfo {
   glm::mat4 view_matrix;
   glm::mat4 projection_matrix;
+  glm::vec3 view_pos;
 };
 
 class Renderer {
  public:
   void Init();
+
+  template <typename VertexType>
+  [[nodiscard]] AssetHandle AllocateMeshVertices(std::vector<VertexType>& vertices,
+                                                 PrimitiveType primitive_type) {
+    if (primitive_type != PrimitiveType::kTriangles) {
+      spdlog::error("Primitive Type Not supported: {}", static_cast<int>(primitive_type));
+      return 0;
+    }
+    uint32_t mesh_handle = next_mesh_handle_++;
+    if constexpr (std::is_same_v<VertexType, Vertex>) {
+      uint32_t offset;
+      uint32_t handle = pos_tex_vbo_.Allocate(vertices.size(), vertices.data(), offset);
+      mesh_allocs_map_.emplace(handle,
+                               VertexIndexAlloc{.vertex_handle = handle, .index_handle = 0});
+      dei_cmds_map_.try_emplace(
+          mesh_handle, DrawElementsIndirectCommand{
+                           .count = UINT32_MAX,
+                           .instance_count = 0,
+                           .first_index = UINT32_MAX,
+                           .base_vertex = static_cast<uint32_t>(offset / sizeof(VertexType)),
+                           .base_instance = 0,
+                       });
+    }
+    return mesh_handle;
+  }
+
   template <typename VertexType, typename AllocFunc>
   [[nodiscard]] AssetHandle AllocateMeshVertices(uint32_t count, PrimitiveType primitive_type,
                                                  AllocFunc func) {
@@ -88,8 +115,15 @@ class Renderer {
     uint32_t base_instance;
   };
 
+  struct UBOUniforms {
+    glm::mat4 vp_matrix;
+    glm::vec3 view_pos;
+  };
+
+  gl::Buffer<UBOUniforms> uniform_ubo_;
   gl::DynamicBuffer<Vertex> pos_tex_vbo_;
   gl::VertexArray pos_tex_16_vao_;
+  gl::VertexArray pos_tex_32_vao_;
   gl::DynamicBuffer<uint32_t> index_buffer_32_;
   gl::DynamicBuffer<uint16_t> index_buffer_16_;
   gl::DynamicBuffer<Material> material_ssbo_;
@@ -106,11 +140,14 @@ class Renderer {
   // NEED alignas 16 to match GPU padding... 30 minutes wasted, skill issue!
   struct alignas(16) DrawCmdUniforms {
     glm::mat4 model;
+    glm::mat4 normal_matrix;
     uint32_t material_index;
   };
 
-  gl::Buffer<DrawCmdUniforms> static_uniforms_ssbo_;
-  gl::Buffer<DrawElementsIndirectCommand> static_dei_cmds_buffer_;
+  gl::Buffer<DrawCmdUniforms> static_16_bit_idx_uniforms_ssbo_;
+  gl::Buffer<DrawElementsIndirectCommand> static_16_bit_idx_dei_cmds_buffer_;
+  gl::Buffer<DrawCmdUniforms> static_32_bit_idx_uniforms_ssbo_;
+  gl::Buffer<DrawElementsIndirectCommand> static_32_bit_idx_dei_cmds_buffer_;
   bool static_allocs_dirty_{true};
 
   std::unordered_map<AssetHandle, uint32_t> material_allocs_map_;

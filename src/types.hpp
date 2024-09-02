@@ -13,14 +13,17 @@ enum class PrimitiveType : std::uint8_t {
 };
 struct Vertex {
   glm::vec3 position;
+  glm::vec3 normal;
+  glm::vec3 tangent;
   glm::vec2 uv;
 };
 
-struct Material {
-  // glm::vec4 base_color{1};
+struct alignas(16) Material {
+  glm::vec4 base_color{1};
   uint64_t base_color_bindless_handle{};
-  // float alpha_cutoff{};
-  // glm::vec3 _pad;
+  uint64_t metallic_roughness_bindless_handle{};
+  uint64_t normal_bindless_handle{};
+  float alpha_cutoff{};
 };
 
 enum class AlphaMode {
@@ -37,4 +40,9 @@ struct Model {
   std::vector<AssetHandle> texture_handles;
   std::vector<AssetHandle> material_handles;
   std::vector<Primitive> primitives;
+};
+
+struct LightsInfo {
+  glm::vec3 directional_dir;
+  glm::vec3 directional_color;
 };

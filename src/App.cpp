@@ -8,68 +8,67 @@
 
 #include "Input.hpp"
 #include "MeshLoader.hpp"
+#include "Path.hpp"
 #include "Renderer.hpp"
 #include "ResourceManager.hpp"
 #include "Window.hpp"
 #include "gl/ShaderManager.hpp"
+#include "types.hpp"
 
 App::App()
     : window_(1600, 900, "PBR Render", [this](SDL_Event& event) { OnEvent(event); }),
       player_(window_) {}
 
 namespace {
-void FreeModel(Renderer& renderer, ResourceManager& resource_manager, Model& model) {
-  for (auto& mat : model.material_handles) {
-    renderer.FreeMaterial(mat);
-  }
-  for (auto& tex : model.texture_handles) {
-    resource_manager.FreeTexture(tex);
-  }
-  model.material_handles.clear();
-  model.texture_handles.clear();
-  for (auto& p : model.primitives) {
-    renderer.FreeMesh(p.mesh_handle);
-  }
-  model.primitives.clear();
-  model.texture_handles.clear();
-  model.material_handles.clear();
-}
+
+LightsInfo lights_info{.directional_dir = glm::vec3{0, -1, 0}, .directional_color = glm::vec3(1)};
 
 }  // namespace
-void App::Run() {
-  std::string err;
-  std::string warn;
-  std::string path =
-      "/home/tony/dep/models/glTF-Sample-Assets/Models/DamagedHelmet/glTF/DamagedHelmet.gltf";
-  std::string name = "DamagedHelmet.gltf";
-  gl::ShaderManager::Init();
-  ResourceManager resource_manager;
-  Renderer renderer;
-  renderer.Init();
-  Model plane = LoadModel(
-      resource_manager, renderer,
-      "/home/tony/dep/models/glTF-Sample-Assets/Models/TwoSidedPlane/glTF/TwoSidedPlane.gltf");
-  Model model = LoadModel(resource_manager, renderer, path);
 
+void App::Run() {
   player_.SetPosition({-10, 15, -10});
   player_.LookAt({0, 0, 0});
-  auto submit_instanced = [&](int z, const Model& model) {
-    glm::vec3 iter{0, 0, z};
-    std::vector<glm::mat4> model_matrices;
-    constexpr int kHalfLen = 10;
-    for (iter.x = -kHalfLen; iter.x <= kHalfLen; iter.x += 4) {
-      for (iter.y = -kHalfLen; iter.y <= kHalfLen; iter.y += 4) {
-        model_matrices.emplace_back(glm::translate(glm::mat4(1), iter));
-      }
-    }
-    renderer.SubmitStaticInstancedModel(model, model_matrices);
-  };
-  renderer.SubmitStaticModel(model, glm::translate(glm::mat4(1), glm::vec3(0, 0, 0)));
-  renderer.SubmitStaticModel(plane, glm::translate(glm::mat4(1), glm::vec3(0, 0, 2)));
-  submit_instanced(5, plane);
+  std::string err;
+  std::string warn;
+  std::string path = "/home/tony/damaged_helmet.glb";
+  gl::ShaderManager::Init();
+  gl::ShaderManager::Get().AddShader(
+      "textured", {{GET_SHADER_PATH("textured.vs.glsl"), gl::ShaderType::kVertex, {}},
+                   {GET_SHADER_PATH("textured.fs.glsl"), gl::ShaderType::kFragment, {}}});
+  Renderer renderer;
+  ResourceManager resource_manager{renderer};
+  renderer.Init();
 
-  Uint64 curr_time = SDL_GetPerformanceCounter();
-  Uint64 prev_time = 0;
+  auto helmet_handle = resource_manager.Load<Model>(path);
+  Model& helmet = *resource_manager.Get<Model>(helmet_handle);
+  // auto plane_handle = resource_manager.Load<Model>(
+  //     "/home/tony/dep/models/glTF-Sample-Assets/Models/TwoSidedPlane/glTF/TwoSidedPlane.gltf");
+  // Model& plane = *resource_manager.Get<Model>(plane_handle);
+  auto sponza_handle = resource_manager.Load<Model>("/home/tony/toycar.glb");
+  // "/home/tony/dep/models/glTF-Sample-Assets/Models/ToyCar/glTF/ToyCar.gltf");
+  // auto sponza_handle = resource_manager.Load<Model>("/home/tony/sponza.glb");
+  Model& sponza = *resource_manager.Get<Model>(sponza_handle);
+
+  // auto submit_instanced = [&](int z, const Model& model) {
+  //   glm::vec3 iter{0, 0, z};
+  //   std::vector<glm::mat4> model_matrices;
+  //   constexpr int kHalfLen = 10;
+  //   for (iter.x = -kHalfLen; iter.x <= kHalfLen; iter.x += 4) {
+  //     for (iter.y = -kHalfLen; iter.y <= kHalfLen; iter.y += 4) {
+  //       model_matrices.emplace_back(glm::translate(glm::mat4(1), iter));
+  //     }
+  //   }
+  //   renderer.SubmitStaticInstancedModel(model, model_matrices);
+  // };
+
+  // renderer.SubmitStaticModel(helmet, glm::translate(glm::mat4(1), glm::vec3(0, 0, 0)));
+  // renderer.SubmitStaticModel(plane, glm::translate(glm::mat4(1), glm::vec3(0, 0, 2)));
+  renderer.SubmitStaticModel(sponza, glm::scale(glm::mat4(1), glm::vec3(0.1)));
+
+  // submit_instanced(5, plane);
+
+  uint64_t curr_time = SDL_GetPerformanceCounter();
+  uint64_t prev_time = 0;
   double dt = 0;
   while (!window_.ShouldClose()) {
     prev_time = curr_time;
@@ -84,10 +83,16 @@ void App::Run() {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
-    RenderInfo ri{
+    RenderInfo render_info{
         .view_matrix = player_.GetCamera().GetView(),
-        .projection_matrix = player_.GetCamera().GetProjection(window_.GetAspectRatio(), 75)};
-    renderer.DrawStaticOpaque(ri);
+        .projection_matrix = player_.GetCamera().GetProjection(window_.GetAspectRatio(), 75),
+        .view_pos = player_.Position()};
+
+    auto shader = gl::ShaderManager::Get().GetShader("textured").value();
+    shader.Bind();
+    // shader.SetVec3("u_directional_dir", lights_info.directional_dir);
+    // shader.SetVec3("u_directional_color", lights_info.directional_color);
+    renderer.DrawStaticOpaque(render_info);
 
     if (imgui_enabled_) {
       OnImGui();
@@ -96,7 +101,6 @@ void App::Run() {
 
     window_.EndRenderFrame(imgui_enabled_);
   }
-  FreeModel(renderer, resource_manager, model);
 
   gl::ShaderManager::Shutdown();
 }
@@ -129,6 +133,7 @@ void App::OnEvent(SDL_Event& event) {
 
 void App::OnImGui() const {
   ImGui::Begin("Test");
-  ImGui::Text("hellO");
+  ImGui::ColorEdit3("Directional Color", &lights_info.directional_color.x);
+  ImGui::SliderFloat3("Directional Direction", &lights_info.directional_dir.x, -1, 1);
   ImGui::End();
 }

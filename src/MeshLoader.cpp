@@ -12,10 +12,6 @@
 #include "stb_image_impl.hpp"
 #include "types.hpp"
 
-// bool LoadMesh(fastgltf::Mesh& mesh) {
-//
-// }
-
 GLuint ToGLFilter(fastgltf::Filter filter) {
   switch (filter) {
     case fastgltf::Filter::Linear:
@@ -41,7 +37,10 @@ std::optional<fastgltf::Asset> LoadGLTFAsset(const std::filesystem::path& path) 
     return {};
   }
 
-  fastgltf::Parser parser;
+  static constexpr auto kSupportedExtensions = fastgltf::Extensions::KHR_mesh_quantization |
+                                               fastgltf::Extensions::KHR_texture_transform |
+                                               fastgltf::Extensions::KHR_materials_variants;
+
   constexpr auto kOptions =
       fastgltf::Options::DontRequireValidAssetMember | fastgltf::Options::AllowDouble |
       fastgltf::Options::LoadGLBBuffers | fastgltf::Options::LoadExternalBuffers |
@@ -49,8 +48,7 @@ std::optional<fastgltf::Asset> LoadGLTFAsset(const std::filesystem::path& path) 
   fastgltf::GltfDataBuffer data;
   data.loadFromFile(path);
 
-  fastgltf::Asset gltf;
-
+  fastgltf::Parser parser(kSupportedExtensions);
   auto asset = parser.loadGltf(&data, path.parent_path(), kOptions);
   auto type = fastgltf::determineGltfFileType(&data);
   if (type == fastgltf::GltfType::glTF) {
@@ -66,10 +64,10 @@ std::optional<fastgltf::Asset> LoadGLTFAsset(const std::filesystem::path& path) 
     if (result) {
       return std::move(result.get());
     }
-  } else {
-    spdlog::error("Failed to determine glTF container");
+    spdlog::error("Failed to load glTF: {}", fastgltf::getErrorMessage(result.error()));
     return {};
   }
+  spdlog::error("Failed to determine glTF container");
   return {};
 }
 
@@ -79,6 +77,8 @@ struct Image {
 };
 
 }  // namespace
+
+namespace loader {
 
 Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
                 const std::filesystem::path& path) {
@@ -96,6 +96,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
 
   // Load images using stb_image
   std::vector<Image> images;
+  images.reserve(asset.images.size());
   for (fastgltf::Image& image : asset.images) {
     std::visit(
         fastgltf::visitor{
@@ -136,21 +137,23 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
 
   // Load images into GL textures. Doing so separately since multithreading is possible above
   out_model.texture_handles.reserve(images.size());
+  std::vector<std::string> names;
   int i = 0;
   for (Image& img : images) {
+    names.emplace_back(path.string() + std::to_string(i++));
     out_model.texture_handles.emplace_back(
-        resource_manager.LoadTexture(path.string() + std::to_string(i++),
-                                     gl::Tex2DCreateInfo{.dims = glm::ivec2{img.width, img.height},
-                                                         .wrap_s = GL_REPEAT,
-                                                         .wrap_t = GL_REPEAT,
-                                                         .internal_format = GL_RGBA8,
-                                                         .format = GL_RGBA,
-                                                         .type = GL_UNSIGNED_BYTE,
-                                                         .min_filter = GL_LINEAR,
-                                                         .mag_filter = GL_LINEAR,
-                                                         .data = img.data,
-                                                         .bindless = true,
-                                                         .gen_mipmaps = true}));
+        resource_manager.Load(path.string() + std::to_string(i++),
+                              gl::Tex2DCreateInfo{.dims = glm::ivec2{img.width, img.height},
+                                                  .wrap_s = GL_REPEAT,
+                                                  .wrap_t = GL_REPEAT,
+                                                  .internal_format = GL_RGBA8,
+                                                  .format = GL_RGBA,
+                                                  .type = GL_UNSIGNED_BYTE,
+                                                  .min_filter = GL_LINEAR,
+                                                  .mag_filter = GL_LINEAR,
+                                                  .data = img.data,
+                                                  .bindless = true,
+                                                  .gen_mipmaps = true}));
     stbi_image_free(img.data);
   }
 
@@ -166,32 +169,52 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
 
   // Load materials
   out_model.material_handles.reserve(asset.materials.size());
+
+  std::vector<size_t> indices;
   for (fastgltf::Material& gltf_mat : asset.materials) {
     // TODO: handle base color texture
     uint64_t base_color_bindless_handle{};
+    uint64_t metallic_roughness_bindless_handle{};
+    uint64_t normal_bindless_handle{};
     if (gltf_mat.pbrData.baseColorTexture.has_value()) {
-      base_color_bindless_handle =
-          resource_manager
-              .GetTexture(
-                  out_model.texture_handles[gltf_mat.pbrData.baseColorTexture->textureIndex])
-              ->BindlessHandle();
+      auto* tex = resource_manager.Get<gl::Texture>(
+          out_model.texture_handles[gltf_mat.pbrData.baseColorTexture->textureIndex]);
+      if (tex) {
+        base_color_bindless_handle = tex->BindlessHandle();
+      }
+      indices.emplace_back(gltf_mat.pbrData.baseColorTexture->textureIndex);
+    }
+    if (gltf_mat.pbrData.metallicRoughnessTexture.has_value()) {
+      auto* tex = resource_manager.Get<gl::Texture>(
+          out_model.texture_handles[gltf_mat.pbrData.metallicRoughnessTexture->textureIndex]);
+      if (tex) {
+        metallic_roughness_bindless_handle = tex->BindlessHandle();
+      }
+      indices.emplace_back(gltf_mat.pbrData.metallicRoughnessTexture->textureIndex);
+    }
+    if (gltf_mat.normalTexture.has_value()) {
+      auto* tex = resource_manager.Get<gl::Texture>(
+          out_model.texture_handles[gltf_mat.normalTexture->textureIndex]);
+      if (tex) {
+        normal_bindless_handle = tex->BindlessHandle();
+      }
+      indices.emplace_back(gltf_mat.normalTexture->textureIndex);
+    }
+    if (gltf_mat.occlusionTexture.has_value()) {
+      spdlog::error("unimplemented occlusion texture");
     }
 
-    // auto& base_color = gltf_mat.pbrData.baseColorFactor;
-    // out_model.material_handles.emplace_back(renderer.AllocateMaterial(
-    //     Material{
-    //         .base_color = glm::vec4{base_color[0], base_color[1], base_color[2], base_color[3]},
-    //         .base_color_bindless_handle = base_color_bindless_handle,
-    //         .alpha_cutoff = gltf_mat.alphaCutoff,
-    //         ._pad = {}},
-    //     convert_alpha_mode(gltf_mat.alphaMode)));
+    auto& base_color = gltf_mat.pbrData.baseColorFactor;
     out_model.material_handles.emplace_back(renderer.AllocateMaterial(
         Material{
+            .base_color = glm::vec4{base_color[0], base_color[1], base_color[2], base_color[3]},
             .base_color_bindless_handle = base_color_bindless_handle,
+            .metallic_roughness_bindless_handle = metallic_roughness_bindless_handle,
+            .normal_bindless_handle = normal_bindless_handle,
+            .alpha_cutoff = gltf_mat.alphaCutoff,
         },
         convert_alpha_mode(gltf_mat.alphaMode)));
   }
-
   // Load primitives
   for (fastgltf::Mesh& mesh : asset.meshes) {
     for (auto& gltf_primitive : mesh.primitives) {
@@ -234,36 +257,58 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
       // Position
       auto& position_accessor = asset.accessors[position_it->second];
       if (!position_accessor.bufferViewIndex.has_value()) {
-        spdlog::info("no position accessor for primitive at path {}", path.string());
+        spdlog::error("no position accessor for primitive at model path {}", path.string());
         continue;
       }
-      bool has_tex_coords = true;
-      const auto* tex_coord = gltf_primitive.findAttribute(
+      const auto* tex_coord_iter = gltf_primitive.findAttribute(
           std::string("TEXCOORD_") + std::to_string(base_color_tex_coord_idx));
-      if (tex_coord == gltf_primitive.attributes.end() ||
-          !asset.accessors[tex_coord->second].bufferViewIndex.has_value()) {
-        spdlog::info("no tex coords");
-        has_tex_coords = false;
+      const auto* normal_iter = gltf_primitive.findAttribute("NORMAL");
+      const auto* tangent_iter = gltf_primitive.findAttribute("TANGENT");
+
+      // Allocate the vertices, callback function takes the pointer to the allocation of the
+      // mapped buffer, and copies the data to it, or returns if the allocator couldn't allocate
+      // the size mesh handle returned is then used to allocate indices associated with the mesh
+      const bool has_tex_coords =
+          tex_coord_iter != gltf_primitive.attributes.end() &&
+          asset.accessors[tex_coord_iter->second].bufferViewIndex.has_value();
+      const bool has_normals = normal_iter != gltf_primitive.attributes.end() &&
+                               asset.accessors[normal_iter->second].bufferViewIndex.has_value();
+      const bool has_tangents = tangent_iter != gltf_primitive.attributes.end() &&
+                                asset.accessors[tangent_iter->second].bufferViewIndex.has_value();
+      std::vector<Vertex> vertices(position_accessor.count);
+      fastgltf::iterateAccessorWithIndex<glm::vec3>(
+          asset, position_accessor,
+          [&vertices](glm::vec3 pos, size_t idx) { vertices[idx].position = pos; });
+      if (has_tex_coords) {
+        auto& tex_coord_accessor = asset.accessors[tex_coord_iter->second];
+        fastgltf::iterateAccessorWithIndex<glm::vec2>(
+            asset, tex_coord_accessor,
+            [&vertices](glm::vec2 uv, size_t idx) { vertices[idx].uv = uv; });
       }
-      // Allocate the vertices, callback function takes the pointer to the allocation of the mapped
-      // buffer, and copies the data to it, or returns if the allocator couldn't allocate the size
-      // mesh handle returned is then used to allocate indices associated with the mesh
-      uint32_t mesh_handle = renderer.AllocateMeshVertices<Vertex>(
-          position_accessor.count, primitive_type,
-          [&asset, &position_accessor, &tex_coord, has_tex_coords](Vertex* vertices, bool error) {
-            if (error) return;
-            fastgltf::iterateAccessorWithIndex<glm::vec3>(
-                asset, position_accessor,
-                [vertices](glm::vec3 pos, size_t idx) { vertices[idx].position = pos; });
+      if (has_normals) {
+        auto& normal_accessor = asset.accessors[normal_iter->second];
+        fastgltf::iterateAccessorWithIndex<glm::vec3>(
+            asset, normal_accessor,
+            [&vertices](glm::vec3 normal, size_t idx) { vertices[idx].normal = normal; });
+      }
+      if (has_tangents) {
+        auto& tangent_accessor = asset.accessors[tangent_iter->second];
+        fastgltf::iterateAccessorWithIndex<glm::vec4>(
+            asset, tangent_accessor, [&vertices](glm::vec4 tangent, size_t idx) {
+              vertices[idx].tangent = glm::vec3{tangent.x, tangent.y, tangent.z};
+            });
+      }
 
-            if (!has_tex_coords) return;
-            auto& tex_coord_accessor = asset.accessors[tex_coord->second];
-            fastgltf::iterateAccessorWithIndex<glm::vec2>(
-                asset, tex_coord_accessor,
-                [vertices](glm::vec2 uv, size_t idx) { vertices[idx].uv = uv; });
-
-            // TODO: normals
-          });
+      if (!has_tangents) {
+        spdlog::error("model does not have tangents, not supported");
+      }
+      if (!has_normals) {
+        spdlog::error("model does not have normals, not supported");
+      }
+      if (!has_tex_coords) {
+        spdlog::error("model does not have tex coords, not supported");
+      }
+      uint32_t mesh_handle = renderer.AllocateMeshVertices<Vertex>(vertices, primitive_type);
 
       // Allocate indices, using mapped index buffer
       auto& index_accessor = asset.accessors[gltf_primitive.indicesAccessor.value()];
@@ -272,17 +317,25 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
       }
       if (index_accessor.componentType == fastgltf::ComponentType::UnsignedByte ||
           index_accessor.componentType == fastgltf::ComponentType::UnsignedShort) {
+        spdlog::info("16");
         renderer.AllocateMeshIndices<uint16_t>(
             mesh_handle, index_accessor.count,
             [&asset, &index_accessor](uint16_t* indices, bool error) {
-              if (error) return;
+              if (error) {
+                spdlog::error("error loading indices");
+                return;
+              }
               fastgltf::copyFromAccessor<uint16_t>(asset, index_accessor, indices);
             });
       } else {
+        spdlog::info("32");
         renderer.AllocateMeshIndices<uint32_t>(
             mesh_handle, index_accessor.count,
             [&asset, &index_accessor](uint32_t* indices, bool error) {
-              if (error) return;
+              if (error) {
+                spdlog::error("error loading indices");
+                return;
+              }
               fastgltf::copyFromAccessor<uint32_t>(asset, index_accessor, indices);
             });
       }
@@ -292,3 +345,5 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
   }
   return out_model;
 }
+
+}  // namespace loader
