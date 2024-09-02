@@ -48,7 +48,8 @@ void App::Run() {
   //     "/home/tony/dep/models/glTF-Sample-Assets/Models/TwoSidedPlane/glTF/TwoSidedPlane.gltf");
   // Model& plane = *resource_manager.Get<Model>(plane_handle);
   auto sponza_handle = resource_manager.Load<Model>(
-      "/home/tony/toycar.glb",
+      "/home/tony/glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf",
+      // "/home/tony/sponza/sponza.gltf",
       // "/home/tony/dep/models/glTF-Sample-Assets/Models/ToyCar/glTF/ToyCar.gltf",
       window_.GetAspectRatio());
   // auto sponza_handle = resource_manager.Load<Model>("/home/tony/sponza.glb");
@@ -138,6 +139,10 @@ void App::OnEvent(SDL_Event& event) {
   if (event.type == SDL_KEYDOWN) {
     if (event.key.keysym.sym == SDLK_g && event.key.keysym.mod & KMOD_ALT) {
       imgui_enabled_ = !imgui_enabled_;
+      return;
+    }
+    if (event.key.keysym.sym == SDLK_r && event.key.keysym.mod & KMOD_ALT) {
+      gl::ShaderManager::Get().RecompileShaders();
       return;
     }
   }

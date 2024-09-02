@@ -87,8 +87,10 @@ void main() {
         roughness *= occ_rough_metallic_tex.g;
     }
     if (mat.occlusion_handle != 0) {
-        occlusion = texture(sampler2D(mat.metallic_roughness_handle), uv).r;
+        occlusion = texture(sampler2D(mat.occlusion_handle), uv).r;
     }
+    o_color = vec4(base_color.rgb, 1.0);
+    return;
     if (mat.normal_handle != 0) {
         normal = texture(sampler2D(mat.normal_handle), uv).rgb;
         // transform to [-1,1]

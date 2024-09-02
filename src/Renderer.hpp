@@ -16,96 +16,31 @@ class Renderer {
   void Init();
 
   template <typename VertexType>
-  [[nodiscard]] AssetHandle AllocateMeshVertices(std::vector<VertexType>& vertices,
-                                                 PrimitiveType primitive_type) {
+  [[nodiscard]] AssetHandle AllocateMesh(std::vector<VertexType>& vertices,
+                                         std::vector<uint32_t>& indices,
+                                         PrimitiveType primitive_type) {
     if (primitive_type != PrimitiveType::kTriangles) {
       spdlog::error("Primitive Type Not supported: {}", static_cast<int>(primitive_type));
       return 0;
     }
     uint32_t mesh_handle = next_mesh_handle_++;
     if constexpr (std::is_same_v<VertexType, Vertex>) {
-      uint32_t offset;
-      uint32_t handle = pos_tex_vbo_.Allocate(vertices.size(), vertices.data(), offset);
-      mesh_allocs_map_.emplace(handle,
-                               VertexIndexAlloc{.vertex_handle = handle, .index_handle = 0});
+      uint32_t vbo_offset;
+      uint32_t vbo_handle = pos_tex_vbo_.Allocate(vertices.size(), vertices.data(), vbo_offset);
+      uint32_t ebo_offset;
+      uint32_t ebo_handle = index_buffer_.Allocate(indices.size(), indices.data(), ebo_offset);
+      mesh_allocs_map_.emplace(
+          vbo_handle, VertexIndexAlloc{.vertex_handle = vbo_handle, .index_handle = ebo_handle});
       dei_cmds_map_.try_emplace(
           mesh_handle, DrawElementsIndirectCommand{
-                           .count = UINT32_MAX,
+                           .count = static_cast<uint32_t>(indices.size()),
                            .instance_count = 0,
-                           .first_index = UINT32_MAX,
-                           .base_vertex = static_cast<uint32_t>(offset / sizeof(VertexType)),
+                           .first_index = static_cast<uint32_t>(ebo_offset / sizeof(uint32_t)),
+                           .base_vertex = static_cast<uint32_t>(vbo_offset / sizeof(VertexType)),
                            .base_instance = 0,
                        });
     }
     return mesh_handle;
-  }
-
-  template <typename VertexType, typename AllocFunc>
-  [[nodiscard]] AssetHandle AllocateMeshVertices(uint32_t count, PrimitiveType primitive_type,
-                                                 AllocFunc func) {
-    if (primitive_type != PrimitiveType::kTriangles) {
-      spdlog::error("Primitive Type Not supported: {}", static_cast<int>(primitive_type));
-      return 0;
-    }
-    uint32_t mesh_handle = next_mesh_handle_++;
-    if constexpr (std::is_same_v<VertexType, Vertex>) {
-      uint32_t offset;
-      uint32_t handle = pos_tex_vbo_.Allocate(count, offset, func);
-      mesh_allocs_map_.emplace(handle,
-                               VertexIndexAlloc{.vertex_handle = handle, .index_handle = 0});
-      dei_cmds_map_.try_emplace(
-          mesh_handle, DrawElementsIndirectCommand{
-                           .count = UINT32_MAX,
-                           .instance_count = 0,
-                           .first_index = UINT32_MAX,
-                           .base_vertex = static_cast<uint32_t>(offset / sizeof(VertexType)),
-                           .base_instance = 0,
-                       });
-    }
-    return mesh_handle;
-  }
-
-  void AllocateMeshIndices(AssetHandle mesh_handle, std::vector<uint32_t>& indices) {
-    auto alloc_it = mesh_allocs_map_.find(mesh_handle);
-    if (alloc_it == mesh_allocs_map_.end()) {
-      spdlog::error(
-          "mesh alloc not found. Must allocate vertices first and use the returned handle");
-      EASSERT(0);
-    }
-    if (alloc_it->second.index_handle != 0) {
-      // TODO: decide whether it's better to free?
-      spdlog::error("mesh alloc already has an index allocation");
-      return;
-    }
-    uint32_t offset;
-    alloc_it->second.index_handle = index_buffer_.Allocate(indices.size(), indices.data(), offset);
-
-    auto dei_it = dei_cmds_map_.find(mesh_handle);
-    EASSERT(dei_it != dei_cmds_map_.end());
-    dei_it->second.first_index = offset / sizeof(uint32_t);
-    dei_it->second.count = indices.size();
-  }
-
-  template <typename AllocFunc>
-  void AllocateMeshIndices(AssetHandle mesh_handle, uint32_t count, AllocFunc func) {
-    auto alloc_it = mesh_allocs_map_.find(mesh_handle);
-    if (alloc_it == mesh_allocs_map_.end()) {
-      spdlog::error(
-          "mesh alloc not found. Must allocate vertices first and use the returned handle");
-      EASSERT(0);
-    }
-    if (alloc_it->second.index_handle != 0) {
-      // TODO: decide whether it's better to free?
-      spdlog::error("mesh alloc already has an index allocation");
-      return;
-    }
-    uint32_t offset;
-    alloc_it->second.index_handle = index_buffer_.Allocate(count, offset, func);
-
-    auto dei_it = dei_cmds_map_.find(mesh_handle);
-    EASSERT(dei_it != dei_cmds_map_.end());
-    dei_it->second.first_index = offset / sizeof(uint32_t);
-    dei_it->second.count = count;
   }
 
   [[nodiscard]] AssetHandle AllocateMaterial(const Material& material, AlphaMode alpha_mode);

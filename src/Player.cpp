@@ -90,7 +90,7 @@ bool Player::OnEvent(const SDL_Event& event) {
       switch (event.key.keysym.sym) {
         case SDLK_f:
           if (event.key.keysym.mod & KMOD_ALT) {
-            camera_state_ = static_cast<CameraState>((static_cast<int>(camera_state_) + 1) % 3);
+            SetCameraState(static_cast<CameraState>((static_cast<int>(camera_state_) + 1) % 3));
             return true;
           }
         case SDLK_m:

@@ -30,7 +30,7 @@ void Renderer::Init() {
   index_buffer_.Init(1000000, sizeof(uint32_t));
   pos_tex_vao_.AttachElementBuffer(index_buffer_.Id());
 
-  material_ssbo_.Init(3000, sizeof(Material));
+  material_ssbo_.Init(30000, sizeof(Material));
   static_dei_cmds_buffer_.Init(2000, GL_DYNAMIC_STORAGE_BIT, nullptr);
   static_uniforms_ssbo_.Init(2000, GL_DYNAMIC_STORAGE_BIT, nullptr);
 }

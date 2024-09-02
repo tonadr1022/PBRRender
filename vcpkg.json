@@ -7,6 +7,7 @@
     "sdl2",
     "shaderc",
     "fastgltf",
+    "mikktspace",
     {
       "name": "imgui",
       "features": ["opengl3-binding", "sdl2-binding"]

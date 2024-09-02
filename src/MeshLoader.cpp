@@ -1,9 +1,12 @@
 #include "MeshLoader.hpp"
 
+#include <mikktspace.h>
+
 #include <fastgltf/core.hpp>
 #include <fastgltf/glm_element_traits.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
+#include <iostream>
 
 #include "pch.hpp"
 
@@ -19,6 +22,71 @@
 #include "types.hpp"
 
 namespace {
+
+template <typename IndexType>
+void CalcTangents(std::vector<Vertex>& vertices, std::vector<IndexType>& indices) {
+  SMikkTSpaceContext ctx{};
+  SMikkTSpaceInterface interface{};
+  ctx.m_pInterface = &interface;
+
+  struct MyCtx {
+    MyCtx(std::vector<Vertex>& vertices, std::vector<IndexType>& indices)
+        : vertices(vertices), indices(indices), num_faces(indices.size() / 3) {}
+    std::vector<Vertex>& vertices;
+    std::vector<IndexType>& indices;
+    size_t num_faces{};
+    int face_size = 3;
+    Vertex& GetVertex(int face_idx, int vert_idx) {
+      return vertices[indices[(face_idx * face_size) + vert_idx]];
+    }
+  };
+
+  MyCtx my_ctx{vertices, indices};
+  ctx.m_pUserData = &my_ctx;
+
+  interface.m_getNumFaces = [](const SMikkTSpaceContext* ctx) -> int {
+    return reinterpret_cast<MyCtx*>(ctx->m_pUserData)->num_faces;
+  };
+  // assuming GL_TRIANGLES until it becomes an issue
+  interface.m_getNumVerticesOfFace = [](const SMikkTSpaceContext* ctx, const int) {
+    return reinterpret_cast<MyCtx*>(ctx->m_pUserData)->face_size;
+  };
+
+  interface.m_getPosition = [](const SMikkTSpaceContext* ctx, float fvPosOut[], const int iFace,
+                               const int iVert) {
+    MyCtx& my_ctx = *reinterpret_cast<MyCtx*>(ctx->m_pUserData);
+    Vertex& vertex = my_ctx.GetVertex(iFace, iVert);
+    fvPosOut[0] = vertex.position.x;
+    fvPosOut[1] = vertex.position.y;
+    fvPosOut[2] = vertex.position.z;
+  };
+  interface.m_getNormal = [](const SMikkTSpaceContext* ctx, float fvNormOut[], const int iFace,
+                             const int iVert) {
+    MyCtx& my_ctx = *reinterpret_cast<MyCtx*>(ctx->m_pUserData);
+    Vertex& vertex = my_ctx.GetVertex(iFace, iVert);
+    fvNormOut[0] = vertex.normal.x;
+    fvNormOut[1] = vertex.normal.y;
+    fvNormOut[2] = vertex.normal.z;
+  };
+  interface.m_getTexCoord = [](const SMikkTSpaceContext* ctx, float fvTexcOut[], const int iFace,
+                               const int iVert) {
+    MyCtx& my_ctx = *reinterpret_cast<MyCtx*>(ctx->m_pUserData);
+    Vertex& vertex = my_ctx.GetVertex(iFace, iVert);
+    fvTexcOut[0] = vertex.uv.x;
+    fvTexcOut[1] = vertex.uv.y;
+  };
+  interface.m_setTSpaceBasic = [](const SMikkTSpaceContext* ctx, const float fvTangent[],
+                                  const float, const int iFace, const int iVert) {
+    MyCtx& my_ctx = *reinterpret_cast<MyCtx*>(ctx->m_pUserData);
+    Vertex& vertex = my_ctx.GetVertex(iFace, iVert);
+    vertex.tangent.x = fvTangent[0];
+    vertex.tangent.y = fvTangent[1];
+    vertex.tangent.z = fvTangent[2];
+    std::cout << vertex.tangent.x << '\n';
+    // vertex.tangent.w = fSign;
+  };
+  genTangSpaceDefault(&ctx);
+}
 
 void DecomposeMatrix(const glm::mat4& m, glm::vec3& pos, glm::quat& rot, glm::vec3& scale) {
   pos = m[3];
@@ -110,9 +178,9 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
   auto& asset = res.value();
 
   // Load images using stb_image
+  // TODO: multithread
   std::vector<Image> images;
   images.reserve(asset.images.size());
-  spdlog::info("samplers size: {}", asset.samplers.size());
   for (fastgltf::Image& image : asset.images) {
     std::visit(
         fastgltf::visitor{
@@ -151,60 +219,31 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
         image.data);
   }
 
-  // Load images into GL textures. Doing so separately since multithreading is possible above
-  out_model.texture_handles.resize(images.size());
-  // for (Image& img : images) {
-  //   names.emplace_back(path.string() + std::to_string(i++));
-  //   out_model.texture_handles.emplace_back(resource_manager.Load<gl::Texture>(
-  //       path.string() + std::to_string(i++),
-  //       gl::Tex2DCreateInfo{.dims = glm::ivec2{img.width, img.height},
-  //                           .wrap_s = GL_REPEAT,
-  //                           .wrap_t = GL_REPEAT,
-  //                           .internal_format = GL_RGBA8,
-  //                           .format = GL_RGBA,
-  //                           .type = GL_UNSIGNED_BYTE,
-  //                           .min_filter = GL_LINEAR,
-  //                           .mag_filter = GL_LINEAR,
-  //                           .data = img.data,
-  //                           .bindless = true,
-  //                           .gen_mipmaps = true}));
-  //   stbi_image_free(img.data);
-  // }
-
-  auto convert_alpha_mode = [](fastgltf::AlphaMode mode) -> AlphaMode {
-    switch (mode) {
-      case fastgltf::AlphaMode::Opaque:
-        return AlphaMode::kOpaque;
-      case fastgltf::AlphaMode::Blend:
-      case fastgltf::AlphaMode::Mask:
-        return AlphaMode::kBlend;
-    }
-  };
-
   // Load materials
   out_model.material_handles.reserve(asset.materials.size());
+
+  out_model.texture_handles.resize(images.size());
   int num_textures = 0;
-
-  auto get_image_name = [&path, &num_textures]() {
-    return path.string() + std::to_string(num_textures++);
-  };
-
-  auto load_texture_into_material = [&get_image_name, &out_model, &images, &asset,
-                                     &resource_manager](uint64_t& out_handle, size_t tex_idx,
-                                                        GLuint internal_format) -> bool {
-    auto& img = images[tex_idx];
+  auto load_texture_into_material = [&path, &num_textures, &out_model, &images, &resource_manager](
+                                        uint64_t& out_handle, size_t tex_idx, size_t image_index,
+                                        GLuint internal_format) -> bool {
+    // Load the texture with unique name and creation info
+    auto& img = images[image_index];
     out_model.texture_handles[tex_idx] = resource_manager.Load<gl::Texture>(
-        get_image_name(), gl::Tex2DCreateInfo{.dims = glm::ivec2{img.width, img.height},
-                                              .wrap_s = GL_REPEAT,
-                                              .wrap_t = GL_REPEAT,
-                                              .internal_format = internal_format,
-                                              .format = GL_RGBA,
-                                              .type = GL_UNSIGNED_BYTE,
-                                              .min_filter = GL_LINEAR,
-                                              .mag_filter = GL_LINEAR,
-                                              .data = img.data,
-                                              .bindless = true,
-                                              .gen_mipmaps = true});
+        path.string() + std::to_string(num_textures++),
+        gl::Tex2DCreateInfo{.dims = glm::ivec2{img.width, img.height},
+                            .wrap_s = GL_REPEAT,
+                            .wrap_t = GL_REPEAT,
+                            .internal_format = internal_format,
+                            .format = GL_RGBA,
+                            .type = GL_UNSIGNED_BYTE,
+                            .min_filter = GL_LINEAR,
+                            .mag_filter = GL_LINEAR,
+                            .data = img.data,
+                            .bindless = true,
+                            .gen_mipmaps = true});
+
+    // get the texture and set the handle if it was made
     auto* tex = resource_manager.Get<gl::Texture>(out_model.texture_handles[tex_idx]);
     if (tex) {
       out_handle = tex->BindlessHandle();
@@ -217,6 +256,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
     Material out_mat{};
     if (gltf_mat.pbrData.baseColorTexture.has_value()) {
       auto& texture = gltf_mat.pbrData.baseColorTexture.value();
+      auto& tex = asset.textures[gltf_mat.pbrData.baseColorTexture.value().textureIndex];
       // TODO: see if it's possible to have different textures with diff uv scales?
       if (gltf_mat.pbrData.baseColorTexture->transform) {
         auto& transform = texture.transform;
@@ -225,7 +265,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
         out_mat.uv_rotation = transform->rotation;
       }
       load_texture_into_material(out_mat.base_color_bindless_handle, texture.textureIndex,
-                                 GL_SRGB8_ALPHA8);
+                                 tex.imageIndex.value(), GL_SRGB8_ALPHA8);
     }
 
     // has metallic roughness and occlusion and indices are the same -> occlusionRoughnessMetallic
@@ -233,33 +273,38 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
         gltf_mat.occlusionTexture.has_value() &&
         gltf_mat.pbrData.metallicRoughnessTexture->textureIndex ==
             gltf_mat.occlusionTexture->textureIndex) {
-      if (load_texture_into_material(out_mat.metallic_roughness_bindless_handle,
-                                     gltf_mat.pbrData.metallicRoughnessTexture->textureIndex,
-                                     GL_RGBA8)) {
+      auto& tex = asset.textures[gltf_mat.pbrData.metallicRoughnessTexture.value().textureIndex];
+      if (load_texture_into_material(
+              out_mat.metallic_roughness_bindless_handle, tex.imageIndex.value(),
+              gltf_mat.pbrData.metallicRoughnessTexture->textureIndex, GL_RGBA8)) {
         out_mat.material_flags |= MaterialFlags::kOcclusionRoughnessMetallic;
       }
     } else {
       // metallic roughness
       if (gltf_mat.pbrData.metallicRoughnessTexture.has_value()) {
-        if (load_texture_into_material(out_mat.metallic_roughness_bindless_handle,
-                                       gltf_mat.pbrData.metallicRoughnessTexture->textureIndex,
-                                       GL_RGBA8)) {
+        auto& tex = asset.textures[gltf_mat.pbrData.metallicRoughnessTexture.value().textureIndex];
+        if (load_texture_into_material(
+                out_mat.metallic_roughness_bindless_handle, tex.imageIndex.value(),
+                gltf_mat.pbrData.metallicRoughnessTexture->textureIndex, GL_RGBA8)) {
           out_mat.material_flags |= MaterialFlags::kMetallicRoughness;
         }
       }
       // occlusion
       if (gltf_mat.occlusionTexture.has_value()) {
-        load_texture_into_material(out_mat.occlusion_handle,
+        auto& tex = asset.textures[gltf_mat.occlusionTexture.value().textureIndex];
+        load_texture_into_material(out_mat.occlusion_handle, tex.imageIndex.value(),
                                    gltf_mat.occlusionTexture->textureIndex, GL_RGBA8);
       }
     }
 
     if (gltf_mat.emissiveTexture.has_value()) {
+      auto& tex = asset.textures[gltf_mat.emissiveTexture.value().textureIndex];
       load_texture_into_material(out_mat.emissive_handle, gltf_mat.emissiveTexture->textureIndex,
-                                 GL_SRGB8_ALPHA8);
+                                 tex.imageIndex.value(), GL_SRGB8_ALPHA8);
     }
     if (gltf_mat.normalTexture.has_value()) {
-      load_texture_into_material(out_mat.normal_bindless_handle,
+      auto& tex = asset.textures[gltf_mat.normalTexture.value().textureIndex];
+      load_texture_into_material(out_mat.normal_bindless_handle, tex.imageIndex.value(),
                                  gltf_mat.normalTexture->textureIndex, GL_RGBA8);
     }
 
@@ -274,6 +319,16 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
     out_mat.emissive_strength = gltf_mat.emissiveStrength;
     out_mat.emissive_factor = glm::vec4{gltf_mat.emissiveFactor[0], gltf_mat.emissiveFactor[1],
                                         gltf_mat.emissiveFactor[2], 1};
+
+    auto convert_alpha_mode = [](fastgltf::AlphaMode mode) -> AlphaMode {
+      switch (mode) {
+        case fastgltf::AlphaMode::Opaque:
+          return AlphaMode::kOpaque;
+        case fastgltf::AlphaMode::Blend:
+        case fastgltf::AlphaMode::Mask:
+          return AlphaMode::kBlend;
+      }
+    };
     out_model.material_handles.emplace_back(
         renderer.AllocateMaterial(out_mat, convert_alpha_mode(gltf_mat.alphaMode)));
   }
@@ -326,9 +381,6 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
       const auto* normal_iter = gltf_primitive.findAttribute("NORMAL");
       const auto* tangent_iter = gltf_primitive.findAttribute("TANGENT");
 
-      // Allocate the vertices, callback function takes the pointer to the allocation of the
-      // mapped buffer, and copies the data to it, or returns if the allocator couldn't allocate
-      // the size mesh handle returned is then used to allocate indices associated with the mesh
       const bool has_tex_coords =
           tex_coord_iter != gltf_primitive.attributes.end() &&
           asset.accessors[tex_coord_iter->second].bufferViewIndex.has_value();
@@ -360,16 +412,14 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
             });
       }
 
-      if (!has_tangents) {
-        spdlog::error("model does not have tangents, not supported");
-      }
       if (!has_normals) {
+        // TODO: use diff vertex layout
         spdlog::error("model does not have normals, not supported");
       }
       if (!has_tex_coords) {
+        // TODO: use diff vertex layout
         spdlog::error("model does not have tex coords, not supported");
       }
-      uint32_t mesh_handle = renderer.AllocateMeshVertices<Vertex>(vertices, primitive_type);
 
       // Allocate indices, using mapped index buffer
       auto& index_accessor = asset.accessors[gltf_primitive.indicesAccessor.value()];
@@ -377,22 +427,23 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
         spdlog::info("no index accessor buffer view index for primitive at path {}", path.string());
         continue;
       }
-
+      std::vector<uint32_t> indices(index_accessor.count);
       if (index_accessor.componentType == fastgltf::ComponentType::UnsignedByte ||
           index_accessor.componentType == fastgltf::ComponentType::UnsignedShort) {
-        std::vector<uint16_t> indices(index_accessor.count);
-        fastgltf::copyFromAccessor<uint16_t>(asset, index_accessor, indices.data());
-        std::vector<uint32_t> in(index_accessor.count);
-        std::transform(indices.begin(), indices.end(), in.begin(),
+        std::vector<uint16_t> short_indices(index_accessor.count);
+        fastgltf::copyFromAccessor<uint16_t>(asset, index_accessor, short_indices.data());
+        std::transform(short_indices.begin(), short_indices.end(), indices.begin(),
                        [](uint16_t val) { return static_cast<uint32_t>(val); });
-        renderer.AllocateMeshIndices(mesh_handle, in);
       } else {
-        std::vector<uint32_t> indices(index_accessor.count);
         fastgltf::copyFromAccessor<uint32_t>(asset, index_accessor, indices.data());
-        renderer.AllocateMeshIndices(mesh_handle, indices);
       }
 
-      out_primitive.mesh_handle = mesh_handle;
+      // Calc tangents using Mikktspace
+      if (!has_tangents) {
+        CalcTangents(vertices, indices);
+      }
+
+      out_primitive.mesh_handle = renderer.AllocateMesh<Vertex>(vertices, indices, primitive_type);
       out_mesh.primitives.emplace_back(out_primitive);
     }
     out_model.meshes.emplace_back(out_mesh);

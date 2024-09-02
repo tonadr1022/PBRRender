@@ -9,6 +9,7 @@ find_package(imgui CONFIG REQUIRED)
 find_package(Tracy CONFIG REQUIRED)
 find_package(unofficial-shaderc CONFIG REQUIRED)
 find_package(fastgltf CONFIG REQUIRED)
+find_package(mikktspace CONFIG REQUIRED)
 
 add_compile_definitions(TRACY_ENABLE)
 option(TRACY_ENABLE "" ON)
@@ -33,6 +34,7 @@ set(SOURCES
     camera/OrbitCamera.cpp
 )
 
+add_compile_definitions(SRC_PATH="${CMAKE_SOURCE_DIR}/")
 add_executable(${PROJECT_NAME} ${SOURCES})
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -43,11 +45,14 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     endif()
 endif()
 
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_HOME_DIRECTORY}/dep)
+
 target_precompile_headers(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/pch.hpp)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>
     $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
+    mikktspace::mikktspace
     imgui::imgui
     GLEW::GLEW
     unofficial::shaderc::shaderc

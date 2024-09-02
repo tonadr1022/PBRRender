@@ -8,9 +8,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 project(pbr_render VERSION 1.0)
 
-add_compile_definitions(SRC_PATH="${CMAKE_SOURCE_DIR}/")
-
 include_directories(src)
-include_directories(dep)
 add_subdirectory(src)
 
