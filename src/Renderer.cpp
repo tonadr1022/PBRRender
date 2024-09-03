@@ -19,7 +19,7 @@ void Renderer::Init() {
   glEnable(GL_DEBUG_OUTPUT);
   glDebugMessageCallback(gl::MessageCallback, nullptr);
   uniform_ubo_.Init(1, GL_DYNAMIC_STORAGE_BIT, nullptr);
-  pos_tex_vbo_.Init(1000000, sizeof(Vertex));
+  pos_tex_vbo_.Init(10000000, sizeof(Vertex));
 
   pos_tex_vao_.Init();
   pos_tex_vao_.EnableAttribute<float>(0, 3, offsetof(Vertex, position));
@@ -27,12 +27,17 @@ void Renderer::Init() {
   pos_tex_vao_.EnableAttribute<float>(2, 3, offsetof(Vertex, tangent));
   pos_tex_vao_.EnableAttribute<float>(3, 2, offsetof(Vertex, uv));
   pos_tex_vao_.AttachVertexBuffer(pos_tex_vbo_.Id(), 0, 0, sizeof(Vertex));
-  index_buffer_.Init(1000000, sizeof(uint32_t));
+  index_buffer_.Init(10000000, sizeof(uint32_t));
   pos_tex_vao_.AttachElementBuffer(index_buffer_.Id());
 
-  material_ssbo_.Init(30000, sizeof(Material));
+  material_ssbo_.Init(3000, sizeof(Material));
   static_dei_cmds_buffer_.Init(2000, GL_DYNAMIC_STORAGE_BIT, nullptr);
   static_uniforms_ssbo_.Init(2000, GL_DYNAMIC_STORAGE_BIT, nullptr);
+  point_lights_ssbo_.Init(20, sizeof(PointLight));
+  std::vector<PointLight> point_lights = {PointLight{
+      .position = glm::vec3{0, 0, 0}, ._pad1 = 0, .color = glm::vec3{1, 1, 1}, .intensity = 100}};
+  uint32_t offset = 0;
+  uint32_t _ = point_lights_ssbo_.Allocate(point_lights.size(), point_lights.data(), offset);
 }
 
 AssetHandle Renderer::AllocateMaterial(const Material& material, AlphaMode) {
@@ -41,7 +46,11 @@ AssetHandle Renderer::AllocateMaterial(const Material& material, AlphaMode) {
   uint32_t offset;
   uint32_t mat_handle =
       material_ssbo_.Allocate(1, reinterpret_cast<const void*>(&material), offset);
-  material_allocs_map_.emplace(mat_handle, offset / sizeof(Material));
+  if (mat_handle == 0) {
+    spdlog::error("Failed to allocate material");
+  } else {
+    material_allocs_map_.emplace(mat_handle, offset / sizeof(Material));
+  }
   return mat_handle;
 }
 
@@ -167,6 +176,7 @@ void Renderer::DrawStaticOpaque(const RenderInfo& render_info) {
   uniform_ubo_.SubDataStart(1, &uniform_data);
   uniform_ubo_.BindBase(GL_UNIFORM_BUFFER, 0);
   material_ssbo_.BindBase(GL_SHADER_STORAGE_BUFFER, 1);
+  point_lights_ssbo_.BindBase(GL_SHADER_STORAGE_BUFFER, 2);
 
   pos_tex_vao_.Bind();
   static_uniforms_ssbo_.BindBase(GL_SHADER_STORAGE_BUFFER, 0);

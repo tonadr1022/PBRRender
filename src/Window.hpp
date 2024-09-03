@@ -23,6 +23,7 @@ class Window {
   [[nodiscard]] glm::ivec2 GetWindowCenter() const;
   static void DisableImGuiInputs();
   static void EnableImGuiInputs();
+  SDL_GLContext gl_context;
 
   [[nodiscard]] float GetAspectRatio() const;
   [[nodiscard]] bool GetVsync() const;

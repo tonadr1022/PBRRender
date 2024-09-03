@@ -17,8 +17,6 @@
 
 namespace {
 
-SDL_GLContext gl_context;
-
 void SetImGuiStyle() {
   ImGuiStyle& style = ImGui::GetStyle();
   ImVec4* colors = style.Colors;
@@ -180,6 +178,7 @@ Window::Window(int width, int height, const char* title, const EventCallback& ev
   // const char* version = reinterpret_cast<const char*>(glewGetString(GLEW_VERSION));
   // spdlog::info("Using GLEW version: {}", version);
 }
+
 void Window::PollEvents() {
   SDL_Event event;
   while (SDL_PollEvent(&event)) {

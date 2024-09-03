@@ -6,7 +6,6 @@
 #include <fastgltf/glm_element_traits.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
-#include <iostream>
 
 #include "pch.hpp"
 
@@ -82,7 +81,6 @@ void CalcTangents(std::vector<Vertex>& vertices, std::vector<IndexType>& indices
     vertex.tangent.x = fvTangent[0];
     vertex.tangent.y = fvTangent[1];
     vertex.tangent.z = fvTangent[2];
-    std::cout << vertex.tangent.x << '\n';
     // vertex.tangent.w = fSign;
   };
   genTangSpaceDefault(&ctx);
@@ -222,13 +220,21 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
   // Load materials
   out_model.material_handles.reserve(asset.materials.size());
 
-  out_model.texture_handles.resize(images.size());
+  out_model.texture_handles.resize(asset.textures.size());
   int num_textures = 0;
-  auto load_texture_into_material = [&path, &num_textures, &out_model, &images, &resource_manager](
-                                        uint64_t& out_handle, size_t tex_idx, size_t image_index,
-                                        GLuint internal_format) -> bool {
+  auto load_texture_and_set_handle = [&path, &asset, &num_textures, &out_model, &images,
+                                      &resource_manager](uint64_t& out_handle,
+                                                         fastgltf::TextureInfo& tex_info,
+
+                                                         GLuint internal_format) -> bool {
+    size_t tex_idx = tex_info.textureIndex;
+    auto img_idx = asset.textures[tex_idx].imageIndex;
+    if (!img_idx.has_value()) {
+      spdlog::error("model loader: image not found for model at path {}", path.string());
+      return false;
+    }
     // Load the texture with unique name and creation info
-    auto& img = images[image_index];
+    auto& img = images[img_idx.value()];
     out_model.texture_handles[tex_idx] = resource_manager.Load<gl::Texture>(
         path.string() + std::to_string(num_textures++),
         gl::Tex2DCreateInfo{.dims = glm::ivec2{img.width, img.height},
@@ -256,7 +262,6 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
     Material out_mat{};
     if (gltf_mat.pbrData.baseColorTexture.has_value()) {
       auto& texture = gltf_mat.pbrData.baseColorTexture.value();
-      auto& tex = asset.textures[gltf_mat.pbrData.baseColorTexture.value().textureIndex];
       // TODO: see if it's possible to have different textures with diff uv scales?
       if (gltf_mat.pbrData.baseColorTexture->transform) {
         auto& transform = texture.transform;
@@ -264,8 +269,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
         out_mat.uv_offset = glm::make_vec2(transform->uvOffset.data());
         out_mat.uv_rotation = transform->rotation;
       }
-      load_texture_into_material(out_mat.base_color_bindless_handle, texture.textureIndex,
-                                 tex.imageIndex.value(), GL_SRGB8_ALPHA8);
+      load_texture_and_set_handle(out_mat.base_color_bindless_handle, texture, GL_SRGB8_ALPHA8);
     }
 
     // has metallic roughness and occlusion and indices are the same -> occlusionRoughnessMetallic
@@ -273,39 +277,34 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
         gltf_mat.occlusionTexture.has_value() &&
         gltf_mat.pbrData.metallicRoughnessTexture->textureIndex ==
             gltf_mat.occlusionTexture->textureIndex) {
-      auto& tex = asset.textures[gltf_mat.pbrData.metallicRoughnessTexture.value().textureIndex];
-      if (load_texture_into_material(
-              out_mat.metallic_roughness_bindless_handle, tex.imageIndex.value(),
-              gltf_mat.pbrData.metallicRoughnessTexture->textureIndex, GL_RGBA8)) {
+      if (load_texture_and_set_handle(out_mat.metallic_roughness_bindless_handle,
+                                      gltf_mat.pbrData.metallicRoughnessTexture.value(),
+                                      GL_RGBA8)) {
         out_mat.material_flags |= MaterialFlags::kOcclusionRoughnessMetallic;
       }
     } else {
       // metallic roughness
       if (gltf_mat.pbrData.metallicRoughnessTexture.has_value()) {
-        auto& tex = asset.textures[gltf_mat.pbrData.metallicRoughnessTexture.value().textureIndex];
-        if (load_texture_into_material(
-                out_mat.metallic_roughness_bindless_handle, tex.imageIndex.value(),
-                gltf_mat.pbrData.metallicRoughnessTexture->textureIndex, GL_RGBA8)) {
+        if (load_texture_and_set_handle(out_mat.metallic_roughness_bindless_handle,
+                                        gltf_mat.pbrData.metallicRoughnessTexture.value(),
+                                        GL_RGBA8)) {
           out_mat.material_flags |= MaterialFlags::kMetallicRoughness;
         }
       }
       // occlusion
       if (gltf_mat.occlusionTexture.has_value()) {
-        auto& tex = asset.textures[gltf_mat.occlusionTexture.value().textureIndex];
-        load_texture_into_material(out_mat.occlusion_handle, tex.imageIndex.value(),
-                                   gltf_mat.occlusionTexture->textureIndex, GL_RGBA8);
+        load_texture_and_set_handle(out_mat.occlusion_bindless_handle,
+                                    gltf_mat.occlusionTexture.value(), GL_RGBA8);
       }
     }
 
     if (gltf_mat.emissiveTexture.has_value()) {
-      auto& tex = asset.textures[gltf_mat.emissiveTexture.value().textureIndex];
-      load_texture_into_material(out_mat.emissive_handle, gltf_mat.emissiveTexture->textureIndex,
-                                 tex.imageIndex.value(), GL_SRGB8_ALPHA8);
+      load_texture_and_set_handle(out_mat.emissive_bindless_handle,
+                                  gltf_mat.emissiveTexture.value(), GL_SRGB8_ALPHA8);
     }
     if (gltf_mat.normalTexture.has_value()) {
-      auto& tex = asset.textures[gltf_mat.normalTexture.value().textureIndex];
-      load_texture_into_material(out_mat.normal_bindless_handle, tex.imageIndex.value(),
-                                 gltf_mat.normalTexture->textureIndex, GL_RGBA8);
+      load_texture_and_set_handle(out_mat.normal_bindless_handle, gltf_mat.normalTexture.value(),
+                                  GL_RGBA8);
     }
 
     auto& base_color = gltf_mat.pbrData.baseColorFactor;
@@ -332,6 +331,11 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
     out_model.material_handles.emplace_back(
         renderer.AllocateMaterial(out_mat, convert_alpha_mode(gltf_mat.alphaMode)));
   }
+
+  for (auto& img : images) {
+    stbi_image_free(img.data);
+  }
+
   // Load primitives
   for (fastgltf::Mesh& mesh : asset.meshes) {
     Mesh out_mesh;
@@ -356,11 +360,6 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
         auto& material = asset.materials[gltf_primitive.materialIndex.value()];
         auto& base_color_tex = material.pbrData.baseColorTexture;
         if (base_color_tex.has_value()) {
-          auto& tex = asset.textures[base_color_tex->textureIndex];
-          if (!tex.imageIndex.has_value()) {
-            // TODO: handle no base texture image
-            EASSERT(0);
-          }
           if (base_color_tex->transform && base_color_tex->transform->texCoordIndex.has_value()) {
             base_color_tex_coord_idx = base_color_tex->transform->texCoordIndex.value();
           } else {
@@ -453,7 +452,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
   }
 
   // TODO: child indices are wrong since skipping some nodes
-  for (size_t node_idx : asset.scenes[0].nodeIndices) {
+  for (size_t node_idx = 0; node_idx < asset.nodes.size(); node_idx++) {
     auto& gltf_node = asset.nodes[node_idx];
     glm::quat rotation{};
     glm::vec3 translation{}, scale{1};

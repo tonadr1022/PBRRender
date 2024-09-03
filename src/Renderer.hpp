@@ -27,8 +27,16 @@ class Renderer {
     if constexpr (std::is_same_v<VertexType, Vertex>) {
       uint32_t vbo_offset;
       uint32_t vbo_handle = pos_tex_vbo_.Allocate(vertices.size(), vertices.data(), vbo_offset);
+      if (vbo_handle == 0) {
+        spdlog::error("Failed to allocate vertices");
+        return 0;
+      }
       uint32_t ebo_offset;
       uint32_t ebo_handle = index_buffer_.Allocate(indices.size(), indices.data(), ebo_offset);
+      if (ebo_handle == 0) {
+        spdlog::error("Failed to allocate indices");
+        return 0;
+      }
       mesh_allocs_map_.emplace(
           vbo_handle, VertexIndexAlloc{.vertex_handle = vbo_handle, .index_handle = ebo_handle});
       dei_cmds_map_.try_emplace(
@@ -72,6 +80,7 @@ class Renderer {
   gl::VertexArray pos_tex_vao_;
   gl::DynamicBuffer<uint32_t> index_buffer_;
   gl::DynamicBuffer<Material> material_ssbo_;
+  gl::DynamicBuffer<PointLight> point_lights_ssbo_;
 
   struct VertexIndexAlloc {
     uint32_t vertex_handle{};

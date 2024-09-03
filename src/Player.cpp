@@ -84,6 +84,7 @@ void Player::OnImGui() {
   }
   ImGui::End();
 }
+
 bool Player::OnEvent(const SDL_Event& event) {
   switch (event.type) {
     case SDL_KEYDOWN:

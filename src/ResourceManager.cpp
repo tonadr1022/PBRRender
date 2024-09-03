@@ -15,3 +15,11 @@ void ResourceManager::FreeModel(Model& model) {
     }
   }
 }
+
+void ResourceManager::Shutdown() {
+  for (auto& [handle, model] : model_map_) {
+    FreeModel(model);
+  }
+  model_map_.clear();
+  texture_map_.clear();
+}

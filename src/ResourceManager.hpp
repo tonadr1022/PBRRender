@@ -15,6 +15,7 @@ concept SupportedResource = std::same_as<T, gl::Texture> || std::same_as<T, Mode
 class ResourceManager {
  public:
   explicit ResourceManager(Renderer& renderer) : renderer_(renderer){};
+  void Shutdown();
 
   template <SupportedResource T, typename ParamT>
   [[nodiscard]] AssetHandle Load(const std::string& path_or_name, ParamT&& params) {
@@ -25,7 +26,8 @@ class ResourceManager {
       if (it != model_map_.end()) {
         spdlog::info("reloading model {}", path_or_name);
       }
-      model_map_.try_emplace(handle, loader::LoadModel(*this, renderer_, path_or_name, params));
+      model_map_.try_emplace(handle,
+                             std::move(loader::LoadModel(*this, renderer_, path_or_name, params)));
     } else if constexpr (std::is_same_v<T, gl::Texture>) {
       auto it = texture_map_.find(handle);
       if (it != texture_map_.end()) {

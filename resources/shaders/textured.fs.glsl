@@ -44,6 +44,17 @@ layout(std430, binding = 1) readonly buffer Materials {
     Material materials[];
 };
 
+struct PointLight {
+    vec3 position;
+    float _pad1;
+    vec3 color;
+    float intensity;
+};
+
+layout(binding = 2, std430) readonly buffer PointLights {
+    PointLight pointLights[];
+};
+
 uniform vec3 u_directional_dir;
 uniform vec3 u_directional_color;
 
@@ -60,37 +71,36 @@ vec2 CalculateUV(Material mat, vec2 uv) {
         );
     return rotation_mat2 * uv * mat.uv_scale + mat.uv_offset;
 }
+
 void main() {
     Material mat = materials[fs_in.material_idx];
     vec2 uv = CalculateUV(mat, fs_in.tex_coords);
     vec4 base_color = mat.base_color;
     float roughness = mat.roughness_factor;
     float metallic = mat.metallic_factor;
-    float occlusion = 0;
+    float ao = 1.0;
     vec3 normal;
 
     if (mat.base_color_handle != 0) {
-        base_color *= texture(sampler2D(mat.base_color_handle), uv);
+        base_color = texture(sampler2D(mat.base_color_handle), uv);
         if ((mat.material_flags & MATERIAL_FLAG_ALPHA_MODE_MASK) != 0 && base_color.a < mat.alpha_cutoff) {
             discard;
         }
     }
     if (mat.metallic_roughness_handle != 0 && (mat.material_flags & MATERIAL_FLAG_METALLIC_ROUGHNESS) != 0) {
         vec4 metallic_roughness_tex = texture(sampler2D(mat.metallic_roughness_handle), uv);
-        metallic *= metallic_roughness_tex.r;
-        roughness *= metallic_roughness_tex.g;
+        metallic = metallic_roughness_tex.r;
+        roughness = metallic_roughness_tex.g;
     } else if (mat.metallic_roughness_handle != 0
             && (mat.material_flags & MATERIAL_FLAG_OCCLUSION_ROUGHNESS_METALLIC) != 0) {
         vec4 occ_rough_metallic_tex = texture(sampler2D(mat.metallic_roughness_handle), uv);
-        occlusion = occ_rough_metallic_tex.r;
-        metallic *= occ_rough_metallic_tex.b;
-        roughness *= occ_rough_metallic_tex.g;
+        ao = occ_rough_metallic_tex.r;
+        metallic = occ_rough_metallic_tex.b;
+        roughness = occ_rough_metallic_tex.g;
     }
     if (mat.occlusion_handle != 0) {
-        occlusion = texture(sampler2D(mat.occlusion_handle), uv).r;
+        ao = texture(sampler2D(mat.occlusion_handle), uv).r;
     }
-    o_color = vec4(base_color.rgb, 1.0);
-    return;
     if (mat.normal_handle != 0) {
         normal = texture(sampler2D(mat.normal_handle), uv).rgb;
         // transform to [-1,1]
@@ -102,42 +112,53 @@ void main() {
     }
 
     vec3 V = normalize(view_pos - fs_in.pos_world_space);
-    // reflectance at normal incidence
-    // 0.04 for dielectrics, higher for metals
     vec3 F0 = vec3(0.04);
     F0 = mix(F0, base_color.rgb, metallic);
 
-    // directional
+    vec3 light_out = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+        vec3 L = normalize(pointLights[i].position.xyz - fs_in.pos_world_space);
+        vec3 H = normalize(V + L);
+        float dist_to_light = length(pointLights[i].position.xyz - fs_in.pos_world_space);
+        float attenuation = 1.0 / (dist_to_light * dist_to_light);
+        vec3 radiance = pointLights[i].color * pointLights[i].intensity * attenuation;
+        float NDF = DistributionGGX(normal, H, roughness);
+        float G = GeometrySmith(normal, V, L, roughness);
+        vec3 F = FresnelSchlick(clamp(dot(H, V), 0.0, 1.0), F0);
+        vec3 numerator = NDF * G * F;
+        float denominator = 4.0 * max(dot(normal, V), 0.0) * max(dot(normal, L), 0.0) + 0.0001;
+        vec3 specular = numerator / denominator;
+        vec3 kS = F;
+        vec3 kD = vec3(1.0) - kS;
+        kD *= 1.0 - metallic;
+        float NdotL = max(dot(normal, L), 0.0);
+        light_out += (kD * base_color.rgb / PI + specular) * radiance * NdotL;
+    }
+
     vec3 L = normalize(-u_directional_dir);
     vec3 H = normalize(V + L);
     vec3 radiance = u_directional_color;
-
-    // Cook-Torrance BRDF
     float NDF = DistributionGGX(normal, H, roughness);
     float G = GeometrySmith(normal, V, L, roughness);
     vec3 F = FresnelSchlick(clamp(dot(H, V), 0.0, 1.0), F0);
-
     vec3 numerator = NDF * G * F;
     float denominator = 4.0 * max(dot(normal, V), 0.0) * max(dot(normal, L), 0.0) + 0.0001; // + 0.0001 to prevent divide by zero
     vec3 specular = numerator / denominator;
-    // kS is equal to Fresnel
     vec3 kS = F;
-    // for energy conservation, the diffuse and specular light can't
-    // be above 1.0 (unless the surface emits light); to preserve this
-    // relationship the diffuse component (kD) should equal 1.0 - kS.
     vec3 kD = vec3(1.0) - kS;
-    // multiply kD by the inverse metalness such that only non-metals
-    // have diffuse lighting, or a linear blend if partly metal (pure metals
-    // have no diffuse light).
     kD *= 1.0 - metallic;
     // scale light by NdotL
     float NdotL = max(dot(normal, L), 0.0);
     vec3 directional_out = ((kD * base_color.rgb / PI + specular) * radiance * NdotL);
 
-    vec3 emissive = mat.emissive_factor.rgb * mat.emissive_strength;
+    // directional_out += light_out;
+    vec3 emissive;
     if (mat.emissive_handle != 0) {
-        emissive *= texture(sampler2D(mat.emissive_handle), uv).rgb;
+        emissive = texture(sampler2D(mat.emissive_handle), uv).rgb * mat.emissive_strength;
+    } else {
+        emissive = mat.emissive_factor.rgb * mat.emissive_strength;
     }
+
     vec3 color = directional_out + emissive;
     // color = color / (color + vec3(1.0));
     // color = pow(color, vec3(1.0 / 2.2));

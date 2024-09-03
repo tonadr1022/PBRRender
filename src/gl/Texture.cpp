@@ -1,5 +1,7 @@
 #include "Texture.hpp"
 
+#include <utility>
+
 #include "pch.hpp"
 
 namespace gl {
@@ -50,11 +52,13 @@ Texture::Texture(const Tex2DCreateInfo& params) { Load(params); }
 
 Texture::Texture(Texture&& other) noexcept
     : id_(std::exchange(other.id_, 0)),
-      bindless_handle_(std::exchange(other.bindless_handle_, 0)) {}
+      bindless_handle_(std::exchange(other.bindless_handle_, 0)),
+      resident_(std::exchange(other.resident_, false)) {}
 
 Texture& Texture::operator=(Texture&& other) noexcept {
   this->id_ = std::exchange(other.id_, 0);
   this->bindless_handle_ = std::exchange(other.bindless_handle_, 0);
+  this->resident_ = std::exchange(other.resident_, false);
   return *this;
 }
 

@@ -1,6 +1,11 @@
 #pragma once
 
+#include <imgui.h>
+#include <imgui_filebrowser/imgui_filebrowser.h>
+
 #include "Player.hpp"
+#include "Renderer.hpp"
+#include "ResourceManager.hpp"
 #include "Window.hpp"
 
 class App {
@@ -11,7 +16,11 @@ class App {
 
  private:
   Window window_;
+  Renderer renderer_;
+  ResourceManager resource_manager_;
   bool imgui_enabled_{true};
-  void OnImGui();
   Player player_;
+
+  void OnImGui();
+  void OnModelChange(const std::string& model);
 };

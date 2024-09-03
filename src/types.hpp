@@ -37,9 +37,9 @@ struct alignas(16) Material {
   glm::vec2 uv_offset{0};
   uint64_t base_color_bindless_handle{};
   uint64_t metallic_roughness_bindless_handle{};
-  uint64_t occlusion_handle{};
+  uint64_t occlusion_bindless_handle{};
   uint64_t normal_bindless_handle{};
-  uint64_t emissive_handle{};
+  uint64_t emissive_bindless_handle{};
   float metallic_factor{1};
   float roughness_factor{1};
   float emissive_strength{0};
@@ -89,4 +89,11 @@ struct Model {
 struct LightsInfo {
   glm::vec3 directional_dir;
   glm::vec3 directional_color;
+};
+
+struct PointLight {
+  glm::vec3 position;
+  float _pad1;
+  glm::vec3 color;
+  float intensity;
 };
