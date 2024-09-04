@@ -2,8 +2,10 @@
 
 #include <SDL_events.h>
 #include <SDL_timer.h>
+#include <imgui.h>
 
 #include <glm/ext/matrix_transform.hpp>
+#include <random>
 
 #include "Input.hpp"
 #include "MeshLoader.hpp"
@@ -14,6 +16,16 @@
 #include "Window.hpp"
 #include "gl/ShaderManager.hpp"
 #include "types.hpp"
+#include "util/ThreadPool.hpp"
+
+struct RandomGen {
+  RandomGen(int min, int max) : random_engine(r()), uniform_dist(min, max) {}
+  std::random_device r;
+  std::default_random_engine random_engine;
+  std::uniform_real_distribution<float> uniform_dist;
+
+  float Get() { return uniform_dist(random_engine); }
+};
 
 App::App()
     : window_(1600, 900, "PBR Render", [this](SDL_Event& event) { OnEvent(event); }),
@@ -22,11 +34,14 @@ App::App()
 
 namespace {
 
+bool point_lights_enabled{true};
+bool directional_light_enabled{true};
 Model* active_model{};
 AssetHandle model_handle{};
 LightsInfo lights_info{.directional_dir = glm::vec3{0, -1, 0}, .directional_color = glm::vec3(1)};
 int cam_index = -1;
 ImGui::FileBrowser file_dialog;
+std::vector<PointLight> point_lights;
 
 }  // namespace
 
@@ -44,35 +59,28 @@ void App::OnModelChange(const std::string& model) {
 }
 
 void App::Run() {
+  ThreadPool::Init();
+  RandomGen g(-10, 10);
+  for (int i = 0; i < 100; i++) {
+    glm::vec3 color = {g.Get(), g.Get() / 2, g.Get()};
+    point_lights.emplace_back(
+        PointLight{.position = color, ._pad1 = 0, .color = glm::vec3{1}, .intensity = 0.1});
+  }
+
   file_dialog.SetTitle("title");
-  file_dialog.SetTypeFilters({".gltf"});
+  file_dialog.SetTypeFilters({".gltf", ".glb"});
   file_dialog.SetCurrentDirectory(std::filesystem::path("/home/tony/glTF-Sample-Assets/Models"));
   player_.SetPosition({-2, 1, 0});
   player_.LookAt({0, 0, 0});
-  std::string err;
-  std::string warn;
-  std::string path = "/home/tony/damaged_helmet.glb";
+
   gl::ShaderManager::Init();
   gl::ShaderManager::Get().AddShader(
       "textured", {{GET_SHADER_PATH("textured.vs.glsl"), gl::ShaderType::kVertex, {}},
                    {GET_SHADER_PATH("textured.fs.glsl"), gl::ShaderType::kFragment, {}}});
   renderer_.Init();
-  OnModelChange("/home/tony/sponza.glb");
-
-  // auto submit_instanced = [&](int z, const Model& model) {
-  //   glm::vec3 iter{0, 0, z};
-  //   std::vector<glm::mat4> model_matrices;
-  //   constexpr int kHalfLen = 10;
-  //   for (iter.x = -kHalfLen; iter.x <= kHalfLen; iter.x += 4) {
-  //     for (iter.y = -kHalfLen; iter.y <= kHalfLen; iter.y += 4) {
-  //       model_matrices.emplace_back(glm::translate(glm::mat4(1), iter));
-  //     }
-  //   }
-  //   renderer.SubmitStaticInstancedModel(model, model_matrices);
-  // };
-  //
-  // renderer.SubmitStaticModel(helmet, glm::translate(glm::mat4(1), glm::vec3(0, 0, 0)));
-  // renderer.SubmitStaticModel(plane, glm::translate(glm::mat4(1), glm::vec3(0, 0, 2)));
+  OnModelChange("/home/tony/abeautifulgame.glb");
+  // OnModelChange("/home/tony/glTF-Sample-Assets/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
+  renderer_.SubmitPointLights(point_lights);
 
   uint64_t curr_time = SDL_GetPerformanceCounter();
   uint64_t prev_time = 0;
@@ -119,10 +127,16 @@ void App::Run() {
     glClearColor(0.1, 0.1, 0.1, 1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_FRAMEBUFFER_SRGB);
+
     glEnable(GL_DEPTH_TEST);
+    // TODO: separate back face cull vs no cull
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
 
     auto shader = gl::ShaderManager::Get().GetShader("textured").value();
     shader.Bind();
+    shader.SetBool("point_lights_enabled", point_lights_enabled);
+    shader.SetBool("directional_light_enabled", directional_light_enabled);
     shader.SetVec3("u_directional_dir", lights_info.directional_dir);
     shader.SetVec3("u_directional_color", lights_info.directional_color);
     renderer_.DrawStaticOpaque(render_info);
@@ -131,15 +145,17 @@ void App::Run() {
       OnImGui();
       player_.OnImGui();
     }
+
     glDisable(GL_FRAMEBUFFER_SRGB);
     window_.EndRenderFrame(imgui_enabled_);
     glEnable(GL_FRAMEBUFFER_SRGB);
   }
-  active_model = nullptr;
 
   gl::ShaderManager::Shutdown();
   resource_manager_.Shutdown();
   window_.Shutdown();
+  ThreadPool::Get().thread_pool.wait();
+  ThreadPool::Shutdown();
 }
 
 void App::OnEvent(SDL_Event& event) {
@@ -173,8 +189,30 @@ void App::OnEvent(SDL_Event& event) {
 }
 
 void App::OnImGui() {
-  ImGui::Begin("Test");
+  ImGui::Begin("PBR Renderer");
+  bool vsync = window_.GetVsync();
+  if (ImGui::Checkbox("Vsync", &vsync)) {
+    window_.SetVsync(vsync);
+  }
 
+  if (ImGui::CollapsingHeader("Point Lights", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::Checkbox("Enabled", &point_lights_enabled);
+    int i = 0;
+    for (auto& light : point_lights) {
+      ImGui::PushID(&light);
+      if (ImGui::ColorEdit3("Color", &light.color.x)) {
+        renderer_.EditPointLight(light, i);
+      }
+      if (ImGui::DragFloat3("Position", &light.position.x)) {
+        renderer_.EditPointLight(light, i);
+      }
+      if (ImGui::SliderFloat("Intensity", &light.intensity, 0.1, 100)) {
+        renderer_.EditPointLight(light, i);
+      }
+      ImGui::PopID();
+      i++;
+    }
+  }
   if (ImGui::Button("Select Model glTF")) {
     file_dialog.Open();
   }
@@ -186,12 +224,12 @@ void App::OnImGui() {
     file_dialog.ClearSelected();
   }
 
-  ImGui::ColorEdit3("Directional Color", &lights_info.directional_color.x);
-  ImGui::SliderFloat3("Directional Direction", &lights_info.directional_dir.x, -1, 1);
-  bool vsync = window_.GetVsync();
-  if (ImGui::Checkbox("Vsync", &vsync)) {
-    window_.SetVsync(vsync);
+  if (ImGui::CollapsingHeader("Directional Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::Checkbox("Enabled", &directional_light_enabled);
+    ImGui::ColorEdit3("Directional Color", &lights_info.directional_color.x);
+    ImGui::SliderFloat3("Directional Direction", &lights_info.directional_dir.x, -1, 1);
   }
+
   ImGui::Text("Cam Index: %i", cam_index);
   if (active_model) {
     size_t i = 0;

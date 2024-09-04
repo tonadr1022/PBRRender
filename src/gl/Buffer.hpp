@@ -31,10 +31,14 @@ class Buffer {
   void Bind(GLuint target) const { glBindBuffer(target, id_); }
   void BindBase(GLuint target, GLuint slot) const { glBindBufferBase(target, slot, id_); }
 
-  void SubDataStart(size_t count, void* data) {
+  void SubDataStart(size_t count, const void* data) {
     glNamedBufferSubData(id_, 0, count * sizeof(T), data);
     num_allocs_ = count;
     offset_ = count * sizeof(T);
+  }
+
+  void SubDataIndex(size_t count, size_t index, const void* data) {
+    glNamedBufferSubData(id_, index * sizeof(T), count * sizeof(T), data);
   }
 
   void SubData(size_t count, void* data) {

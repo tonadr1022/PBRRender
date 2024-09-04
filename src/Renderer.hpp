@@ -19,6 +19,7 @@ class Renderer {
   [[nodiscard]] AssetHandle AllocateMesh(std::vector<VertexType>& vertices,
                                          std::vector<uint32_t>& indices,
                                          PrimitiveType primitive_type) {
+    ZoneScoped;
     if (primitive_type != PrimitiveType::kTriangles) {
       spdlog::error("Primitive Type Not supported: {}", static_cast<int>(primitive_type));
       return 0;
@@ -57,6 +58,8 @@ class Renderer {
   void SubmitStaticModel(Model& model, const glm::mat4& model_matrix);
   void SubmitStaticInstancedModel(const Mesh& mesh, const std::vector<glm::mat4>& model_matrices);
   void ResetStaticDrawCommands();
+  void SubmitPointLights(const std::vector<PointLight>& lights);
+  void EditPointLight(const PointLight& light, size_t idx);
   void DrawStaticOpaque(const RenderInfo& render_info);
   uint32_t NumMaterials() const;
   uint32_t NumMeshes() const;
@@ -80,7 +83,7 @@ class Renderer {
   gl::VertexArray pos_tex_vao_;
   gl::DynamicBuffer<uint32_t> index_buffer_;
   gl::DynamicBuffer<Material> material_ssbo_;
-  gl::DynamicBuffer<PointLight> point_lights_ssbo_;
+  gl::Buffer<PointLight> point_lights_ssbo_;
 
   struct VertexIndexAlloc {
     uint32_t vertex_handle{};

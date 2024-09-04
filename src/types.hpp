@@ -2,6 +2,8 @@
 
 #include <glm/ext/quaternion_float.hpp>
 
+#include "AABB.hpp"
+
 using AssetHandle = uint32_t;
 
 enum class PrimitiveType : std::uint8_t {
@@ -56,17 +58,25 @@ enum class AlphaMode {
 struct Primitive {
   AssetHandle mesh_handle{};
   AssetHandle material_handle{};
+  AABB aabb{};
 };
 
 struct Mesh {
   std::vector<Primitive> primitives;
 };
 
+struct Transform {
+  glm::quat rotation{};
+  glm::vec3 translation{0};
+  glm::vec3 scale{1};
+  bool dirty{true};
+};
+
 struct SceneNode {
+  Transform transform;
+  glm::mat4 model_matrix;
+  AABB aabb;
   std::string name;
-  glm::vec3 translation;
-  glm::quat rotation;
-  glm::vec3 scale;
   std::vector<size_t> child_indices;
   size_t idx;
   size_t mesh_idx;
@@ -79,6 +89,8 @@ struct CameraData {
 };
 
 struct Model {
+  // TODO: handle multiple scenes
+  std::vector<size_t> scene_0_nodes;
   std::vector<CameraData> camera_data;
   std::vector<AssetHandle> texture_handles;
   std::vector<AssetHandle> material_handles;

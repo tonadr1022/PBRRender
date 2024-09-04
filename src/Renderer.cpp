@@ -33,11 +33,7 @@ void Renderer::Init() {
   material_ssbo_.Init(3000, sizeof(Material));
   static_dei_cmds_buffer_.Init(2000, GL_DYNAMIC_STORAGE_BIT, nullptr);
   static_uniforms_ssbo_.Init(2000, GL_DYNAMIC_STORAGE_BIT, nullptr);
-  point_lights_ssbo_.Init(20, sizeof(PointLight));
-  std::vector<PointLight> point_lights = {PointLight{
-      .position = glm::vec3{0, 0, 0}, ._pad1 = 0, .color = glm::vec3{1, 1, 1}, .intensity = 100}};
-  uint32_t offset = 0;
-  uint32_t _ = point_lights_ssbo_.Allocate(point_lights.size(), point_lights.data(), offset);
+  point_lights_ssbo_.Init(200, GL_DYNAMIC_STORAGE_BIT, nullptr);
 }
 
 AssetHandle Renderer::AllocateMaterial(const Material& material, AlphaMode) {
@@ -147,10 +143,7 @@ void Renderer::SubmitStaticModel(Model& model, const glm::mat4& model_matrix) {
         spdlog::error("material not found");
         continue;
       }
-      glm::mat4 transformed_model_matrix =
-          glm::translate(glm::toMat4(node.rotation) * glm::scale(glm::mat4(1), node.scale),
-                         node.translation) *
-          model_matrix;
+      glm::mat4 transformed_model_matrix = model_matrix * node.model_matrix;
       glm::mat4 normal_matrix = glm::transpose(glm::inverse(glm::mat3(transformed_model_matrix)));
       DrawCmdUniforms uniform{.model = transformed_model_matrix,
                               .normal_matrix = normal_matrix,
@@ -168,15 +161,12 @@ void Renderer::SubmitStaticModel(Model& model, const glm::mat4& model_matrix) {
 }
 
 void Renderer::DrawStaticOpaque(const RenderInfo& render_info) {
-  // TODO: separate back face cull vs no cull
-  // glEnable(GL_CULL_FACE);
-  // glCullFace(GL_BACK);
   UBOUniforms uniform_data{.vp_matrix = render_info.projection_matrix * render_info.view_matrix,
                            .view_pos = render_info.view_pos};
   uniform_ubo_.SubDataStart(1, &uniform_data);
   uniform_ubo_.BindBase(GL_UNIFORM_BUFFER, 0);
   material_ssbo_.BindBase(GL_SHADER_STORAGE_BUFFER, 1);
-  point_lights_ssbo_.BindBase(GL_SHADER_STORAGE_BUFFER, 2);
+  point_lights_ssbo_.BindBase(GL_UNIFORM_BUFFER, 1);
 
   pos_tex_vao_.Bind();
   static_uniforms_ssbo_.BindBase(GL_SHADER_STORAGE_BUFFER, 0);
@@ -188,3 +178,14 @@ void Renderer::DrawStaticOpaque(const RenderInfo& render_info) {
 uint32_t Renderer::NumMaterials() const { return material_allocs_map_.size(); }
 
 uint32_t Renderer::NumMeshes() const { return mesh_allocs_map_.size(); }
+
+void Renderer::SubmitPointLights(const std::vector<PointLight>& lights) {
+  point_lights_ssbo_.SubDataStart(lights.size(), lights.data());
+}
+
+void Renderer::EditPointLight(const PointLight& light, size_t idx) {
+  if (idx >= point_lights_ssbo_.NumAllocs()) {
+    spdlog::error("Cannot edit light, out of bounds");
+  }
+  point_lights_ssbo_.SubDataIndex(1, idx, &light);
+}

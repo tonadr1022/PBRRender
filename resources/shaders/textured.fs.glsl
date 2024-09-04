@@ -17,10 +17,12 @@ layout(std140, binding = 0) uniform UBOUniforms {
     vec3 view_pos;
 };
 
-#define MATERIAL_FLAG_NONE 1 << 0
-#define MATERIAL_FLAG_METALLIC_ROUGHNESS 1 << 1
-#define MATERIAL_FLAG_OCCLUSION_ROUGHNESS_METALLIC 1 << 2
-#define MATERIAL_FLAG_ALPHA_MODE_MASK 1 << 3
+#define MATERIAL_FLAG_NONE 0 << 0
+#define MATERIAL_FLAG_METALLIC_ROUGHNESS 1 << 0
+#define MATERIAL_FLAG_OCCLUSION_ROUGHNESS_METALLIC 1 << 1
+#define MATERIAL_FLAG_ALPHA_MODE_MASK 1 << 2
+
+#define MAX_LIGHTS 100
 
 struct Material {
     vec4 base_color;
@@ -51,10 +53,12 @@ struct PointLight {
     float intensity;
 };
 
-layout(binding = 2, std430) readonly buffer PointLights {
-    PointLight pointLights[];
+layout(binding = 1, std140) uniform PointLights {
+    PointLight pointLights[MAX_LIGHTS];
 };
 
+uniform bool point_lights_enabled = true;
+uniform bool directional_light_enabled = true;
 uniform vec3 u_directional_dir;
 uniform vec3 u_directional_color;
 
@@ -116,42 +120,46 @@ void main() {
     F0 = mix(F0, base_color.rgb, metallic);
 
     vec3 light_out = vec3(0.0);
-    for (int i = 0; i < 4; i++) {
-        vec3 L = normalize(pointLights[i].position.xyz - fs_in.pos_world_space);
+    if (point_lights_enabled) {
+        for (int i = 0; i < 100; i++) {
+            vec3 L = normalize(pointLights[i].position.xyz - fs_in.pos_world_space);
+            vec3 H = normalize(V + L);
+            float dist_to_light = length(pointLights[i].position.xyz - fs_in.pos_world_space);
+            float attenuation = 1.0 / (dist_to_light * dist_to_light);
+            vec3 radiance = pointLights[i].color * pointLights[i].intensity * attenuation;
+            float NDF = DistributionGGX(normal, H, roughness);
+            float G = GeometrySmith(normal, V, L, roughness);
+            vec3 F = FresnelSchlick(clamp(dot(H, V), 0.0, 1.0), F0);
+            vec3 numerator = NDF * G * F;
+            float denominator = 4.0 * max(dot(normal, V), 0.0) * max(dot(normal, L), 0.0) + 0.0001;
+            vec3 specular = numerator / denominator;
+            vec3 kS = F;
+            vec3 kD = vec3(1.0) - kS;
+            kD *= 1.0 - metallic;
+            float NdotL = max(dot(normal, L), 0.0);
+            light_out += (kD * base_color.rgb / PI + specular) * radiance * NdotL;
+        }
+    }
+
+    if (directional_light_enabled) {
+        vec3 L = normalize(-u_directional_dir);
         vec3 H = normalize(V + L);
-        float dist_to_light = length(pointLights[i].position.xyz - fs_in.pos_world_space);
-        float attenuation = 1.0 / (dist_to_light * dist_to_light);
-        vec3 radiance = pointLights[i].color * pointLights[i].intensity * attenuation;
+        vec3 radiance = u_directional_color;
         float NDF = DistributionGGX(normal, H, roughness);
         float G = GeometrySmith(normal, V, L, roughness);
         vec3 F = FresnelSchlick(clamp(dot(H, V), 0.0, 1.0), F0);
         vec3 numerator = NDF * G * F;
-        float denominator = 4.0 * max(dot(normal, V), 0.0) * max(dot(normal, L), 0.0) + 0.0001;
+        float denominator = 4.0 * max(dot(normal, V), 0.0) * max(dot(normal, L), 0.0) + 0.0001; // + 0.0001 to prevent divide by zero
         vec3 specular = numerator / denominator;
         vec3 kS = F;
         vec3 kD = vec3(1.0) - kS;
         kD *= 1.0 - metallic;
+        // scale light by NdotL
         float NdotL = max(dot(normal, L), 0.0);
-        light_out += (kD * base_color.rgb / PI + specular) * radiance * NdotL;
+        vec3 directional_out = ((kD * base_color.rgb / PI + specular) * radiance * NdotL);
+        light_out += directional_out;
     }
 
-    vec3 L = normalize(-u_directional_dir);
-    vec3 H = normalize(V + L);
-    vec3 radiance = u_directional_color;
-    float NDF = DistributionGGX(normal, H, roughness);
-    float G = GeometrySmith(normal, V, L, roughness);
-    vec3 F = FresnelSchlick(clamp(dot(H, V), 0.0, 1.0), F0);
-    vec3 numerator = NDF * G * F;
-    float denominator = 4.0 * max(dot(normal, V), 0.0) * max(dot(normal, L), 0.0) + 0.0001; // + 0.0001 to prevent divide by zero
-    vec3 specular = numerator / denominator;
-    vec3 kS = F;
-    vec3 kD = vec3(1.0) - kS;
-    kD *= 1.0 - metallic;
-    // scale light by NdotL
-    float NdotL = max(dot(normal, L), 0.0);
-    vec3 directional_out = ((kD * base_color.rgb / PI + specular) * radiance * NdotL);
-
-    // directional_out += light_out;
     vec3 emissive;
     if (mat.emissive_handle != 0) {
         emissive = texture(sampler2D(mat.emissive_handle), uv).rgb * mat.emissive_strength;
@@ -159,7 +167,7 @@ void main() {
         emissive = mat.emissive_factor.rgb * mat.emissive_strength;
     }
 
-    vec3 color = directional_out + emissive;
+    vec3 color = light_out + emissive;
     // color = color / (color + vec3(1.0));
     // color = pow(color, vec3(1.0 / 2.2));
     o_color = vec4(color, base_color.a);

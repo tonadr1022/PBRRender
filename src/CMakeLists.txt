@@ -32,6 +32,7 @@ set(SOURCES
     Player.cpp
     camera/FPSCamera.cpp
     camera/OrbitCamera.cpp
+    util/ThreadPool.cpp
 )
 
 add_compile_definitions(SRC_PATH="${CMAKE_SOURCE_DIR}/")
@@ -48,6 +49,8 @@ endif()
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_HOME_DIRECTORY}/dep)
 
 target_precompile_headers(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/pch.hpp)
+
+target_include_directories(${PROJECT_NAME} PRIVATE ${BSHOSHANY_THREAD_POOL_INCLUDE_DIRS})
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>

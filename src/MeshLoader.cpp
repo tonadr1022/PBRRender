@@ -8,6 +8,7 @@
 #include <fastgltf/types.hpp>
 
 #include "pch.hpp"
+#include "util/ThreadPool.hpp"
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/ext/matrix_transform.hpp>
@@ -19,11 +20,33 @@
 #include "gl/Texture.hpp"
 #include "stb_image_impl.hpp"
 #include "types.hpp"
+#include "util/Timer.hpp"
 
 namespace {
 
+void UpdateNodeAndChildTransforms(Model& model, SceneNode& node) {
+  ZoneScoped;
+  std::stack<std::pair<SceneNode*, glm::mat4>> traversal_stack;
+  traversal_stack.emplace(&node, glm::mat4(1));
+
+  while (!traversal_stack.empty()) {
+    SceneNode& node = *traversal_stack.top().first;
+    Transform& transform = node.transform;
+    transform.dirty = false;
+    glm::mat4 local_transform = glm::translate(glm::mat4(1), transform.translation) *
+                                glm::mat4_cast(transform.rotation) *
+                                glm::scale(glm::mat4(1), transform.scale);
+    node.model_matrix = local_transform * traversal_stack.top().second;
+    traversal_stack.pop();
+    for (size_t child_idx : node.child_indices) {
+      traversal_stack.emplace(&model.nodes[child_idx], node.model_matrix);
+    }
+  }
+}
+
 template <typename IndexType>
 void CalcTangents(std::vector<Vertex>& vertices, std::vector<IndexType>& indices) {
+  ZoneScoped;
   SMikkTSpaceContext ctx{};
   SMikkTSpaceInterface interface{};
   ctx.m_pInterface = &interface;
@@ -112,6 +135,7 @@ void DecomposeMatrix(const glm::mat4& m, glm::vec3& pos, glm::quat& rot, glm::ve
 // }
 
 std::optional<fastgltf::Asset> LoadGLTFAsset(const std::filesystem::path& path) {
+  ZoneScoped;
   if (!std::filesystem::exists(path)) {
     spdlog::error("Failed to find {}", path.string());
     return {};
@@ -124,8 +148,7 @@ std::optional<fastgltf::Asset> LoadGLTFAsset(const std::filesystem::path& path) 
   constexpr auto kOptions =
       fastgltf::Options::DontRequireValidAssetMember | fastgltf::Options::AllowDouble |
       fastgltf::Options::LoadGLBBuffers | fastgltf::Options::LoadExternalBuffers |
-      fastgltf::Options::LoadExternalImages | fastgltf::Options::GenerateMeshIndices |
-      fastgltf::Options::DecomposeNodeMatrices;
+      fastgltf::Options::GenerateMeshIndices | fastgltf::Options::DecomposeNodeMatrices;
   fastgltf::GltfDataBuffer data;
   data.loadFromFile(path);
 
@@ -163,58 +186,85 @@ namespace loader {
 
 Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
                 const std::filesystem::path& path, float camera_aspect_ratio) {
+  ZoneScoped;
+  PrintTimer t;
   if (!std::filesystem::exists(path)) {
     spdlog::error("Failed to find {}", path.string());
     return {};
   }
-  auto res = LoadGLTFAsset(path);
-  if (!res) {
+  auto load_gltf_result = LoadGLTFAsset(path);
+  if (!load_gltf_result) {
     spdlog::error("Failed to load model: {}", path.string());
     return {};
   }
   Model out_model;
-  auto& asset = res.value();
+  fastgltf::Asset& asset = load_gltf_result.value();
 
   // Load images using stb_image
   // TODO: multithread
   std::vector<Image> images;
   images.reserve(asset.images.size());
+  std::vector<std::future<Image>> futures;
   for (fastgltf::Image& image : asset.images) {
+    ZoneScopedN("Image process");
     std::visit(
         fastgltf::visitor{
             [](auto&) {},
-            [&images](fastgltf::sources::URI& file_path) {
-              int w, h, channels;
-              const std::string path(file_path.uri.path().begin(), file_path.uri.path().end());
-              unsigned char* data = stbi_load(path.c_str(), &w, &h, &channels, 4);
-              images.emplace_back(
-                  Image{.data = data, .width = w, .height = h, .channels = channels});
+            [&path, &futures](fastgltf::sources::URI& file_path) {
+              futures.emplace_back(ThreadPool::Get().thread_pool.submit_task([&file_path, &path]() {
+                int w, h, channels;
+                const std::string image_file_name(file_path.uri.path().begin(),
+                                                  file_path.uri.path().end());
+                const std::filesystem::path full_path = path.parent_path() / image_file_name;
+                if (!std::filesystem::exists(full_path)) {
+                  spdlog::error("uh oh {} {} ", path.parent_path().string(), full_path.string());
+                }
+                unsigned char* data = stbi_load(full_path.string().data(), &w, &h, &channels, 4);
+                return Image{.data = data, .width = w, .height = h, .channels = channels};
+              }));
             },
-            [&images](fastgltf::sources::Array& vector) {
+            [&images, &futures](fastgltf::sources::Array& vector) {
+              futures.emplace_back(ThreadPool::Get().thread_pool.submit_task([&vector]() {
+                int w, h, channels;
+                spdlog::info("load from memory");
+                unsigned char* data = stbi_load_from_memory(
+                    reinterpret_cast<const stbi_uc*>(vector.bytes.data()),
+                    static_cast<int>(vector.bytes.size_bytes()), &w, &h, &channels, 4);
+                return Image{.data = data, .width = w, .height = h, .channels = channels};
+              }));
               int w, h, channels;
+              spdlog::info("load from memory");
               unsigned char* data = stbi_load_from_memory(
                   reinterpret_cast<const stbi_uc*>(vector.bytes.data()),
                   static_cast<int>(vector.bytes.size_bytes()), &w, &h, &channels, 4);
               images.emplace_back(
                   Image{.data = data, .width = w, .height = h, .channels = channels});
             },
-            [&](fastgltf::sources::BufferView& view) {
+            [&asset, &futures](fastgltf::sources::BufferView& view) {
               auto& buffer_view = asset.bufferViews[view.bufferViewIndex];
               auto& buffer = asset.buffers[buffer_view.bufferIndex];
-              std::visit(fastgltf::visitor{
-                             [](auto&) {},
-                             [&](fastgltf::sources::Array& vector) {
-                               int w, h, channels;
-                               unsigned char* data = stbi_load_from_memory(
-                                   reinterpret_cast<const stbi_uc*>(vector.bytes.data() +
-                                                                    buffer_view.byteOffset),
-                                   static_cast<int>(buffer_view.byteLength), &w, &h, &channels, 4);
-                               images.emplace_back(Image{
-                                   .data = data, .width = w, .height = h, .channels = channels});
-                             }},
-                         buffer.data);
+              std::visit(
+                  fastgltf::visitor{
+                      [](auto&) {},
+                      [&futures, &buffer_view](fastgltf::sources::Array& vector) {
+                        futures.emplace_back(
+                            ThreadPool::Get().thread_pool.submit_task([&vector, &buffer_view]() {
+                              int w, h, channels;
+                              unsigned char* data = stbi_load_from_memory(
+                                  reinterpret_cast<const stbi_uc*>(vector.bytes.data() +
+                                                                   buffer_view.byteOffset),
+                                  static_cast<int>(buffer_view.byteLength), &w, &h, &channels, 4);
+                              return Image{
+                                  .data = data, .width = w, .height = h, .channels = channels};
+                            }));
+                      }},
+                  buffer.data);
             }},
         image.data);
+  }
+
+  for (auto& future : futures) {
+    images.emplace_back(future.get());
   }
 
   // Load materials
@@ -259,6 +309,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
   };
 
   for (fastgltf::Material& gltf_mat : asset.materials) {
+    ZoneScopedN("Material process");
     Material out_mat{};
     if (gltf_mat.pbrData.baseColorTexture.has_value()) {
       auto& texture = gltf_mat.pbrData.baseColorTexture.value();
@@ -338,6 +389,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
 
   // Load primitives
   for (fastgltf::Mesh& mesh : asset.meshes) {
+    ZoneScopedN("Mesh process");
     Mesh out_mesh;
     for (auto& gltf_primitive : mesh.primitives) {
       Primitive out_primitive;
@@ -387,23 +439,41 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
                                asset.accessors[normal_iter->second].bufferViewIndex.has_value();
       const bool has_tangents = tangent_iter != gltf_primitive.attributes.end() &&
                                 asset.accessors[tangent_iter->second].bufferViewIndex.has_value();
+      if (auto* min = std::get_if<std::pmr::vector<double>>(&position_accessor.min)) {
+        if (min->size() != 3) {
+          spdlog::error("Cannot compute bounding box for primitive");
+        } else {
+          out_primitive.aabb.min = {(*min)[0], (*min)[1], (*min)[2]};
+        }
+      }
+
+      if (auto* max = std::get_if<std::pmr::vector<double>>(&position_accessor.max)) {
+        if (max->size() != 3) {
+          spdlog::error("Cannot compute bounding box for primitive");
+        } else {
+          out_primitive.aabb.max = {(*max)[0], (*max)[1], (*max)[2]};
+        }
+      }
       std::vector<Vertex> vertices(position_accessor.count);
       fastgltf::iterateAccessorWithIndex<glm::vec3>(
           asset, position_accessor,
           [&vertices](glm::vec3 pos, size_t idx) { vertices[idx].position = pos; });
       if (has_tex_coords) {
+        ZoneScopedN("Iterate tex coords");
         auto& tex_coord_accessor = asset.accessors[tex_coord_iter->second];
         fastgltf::iterateAccessorWithIndex<glm::vec2>(
             asset, tex_coord_accessor,
             [&vertices](glm::vec2 uv, size_t idx) { vertices[idx].uv = uv; });
       }
       if (has_normals) {
+        ZoneScopedN("Iterate normals");
         auto& normal_accessor = asset.accessors[normal_iter->second];
         fastgltf::iterateAccessorWithIndex<glm::vec3>(
             asset, normal_accessor,
             [&vertices](glm::vec3 normal, size_t idx) { vertices[idx].normal = normal; });
       }
       if (has_tangents) {
+        ZoneScopedN("Iterate tangents");
         auto& tangent_accessor = asset.accessors[tangent_iter->second];
         fastgltf::iterateAccessorWithIndex<glm::vec4>(
             asset, tangent_accessor, [&vertices](glm::vec4 tangent, size_t idx) {
@@ -453,6 +523,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
 
   // TODO: child indices are wrong since skipping some nodes
   for (size_t node_idx = 0; node_idx < asset.nodes.size(); node_idx++) {
+    ZoneScopedN("Process transforms and cameras");
     auto& gltf_node = asset.nodes[node_idx];
     glm::quat rotation{};
     glm::vec3 translation{}, scale{1};
@@ -508,17 +579,21 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
       continue;
     }
     out_model.nodes.emplace_back(SceneNode{
+        .transform =
+            Transform{
+                .rotation = rotation, .translation = translation, .scale = scale, .dirty = true},
+        .model_matrix = {},
+        .aabb = {},
         .name = std::string(gltf_node.name.begin(), gltf_node.name.end()),
-        .translation = translation,
-        .rotation = rotation,
-        .scale = scale,
         .child_indices = std::vector<size_t>(gltf_node.children.begin(), gltf_node.children.end()),
         .idx = node_idx,
         .mesh_idx = gltf_node.meshIndex.value_or(0)});
+  }
 
-    if (!gltf_node.children.empty()) {
-      spdlog::error("unimplemented: nodes have children");
-    }
+  out_model.scene_0_nodes = {asset.scenes[0].nodeIndices.begin(),
+                             asset.scenes[0].nodeIndices.end()};
+  for (auto idx : out_model.scene_0_nodes) {
+    UpdateNodeAndChildTransforms(out_model, out_model.nodes[idx]);
   }
   return out_model;
 }

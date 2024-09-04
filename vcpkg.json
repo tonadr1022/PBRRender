@@ -8,6 +8,7 @@
     "shaderc",
     "fastgltf",
     "mikktspace",
+    "bshoshany-thread-pool",
     {
       "name": "imgui",
       "features": ["opengl3-binding", "sdl2-binding"]
