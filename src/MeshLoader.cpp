@@ -387,136 +387,170 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
     stbi_image_free(img.data);
   }
 
+  struct Data {
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+    PrimitiveType primitive_type;
+    AssetHandle material_handle;
+    AABB aabb;
+    size_t mesh_idx;
+  };
+  std::vector<std::future<Data>> primitive_load_futures;
   // Load primitives
+  size_t mesh_idx = 0;
   for (fastgltf::Mesh& mesh : asset.meshes) {
     ZoneScopedN("Mesh process");
-    Mesh out_mesh;
+    size_t curr_mesh_idx = mesh_idx++;
     for (auto& gltf_primitive : mesh.primitives) {
-      Primitive out_primitive;
-      auto* position_it = gltf_primitive.findAttribute("POSITION");
-      if (position_it == gltf_primitive.attributes.end()) {
-        spdlog::error("glTF Mesh does not contain POSITION attribute");
-        continue;
-      }
-      EASSERT_MSG(gltf_primitive.indicesAccessor.has_value(), "Must specify to generate indices");
+      primitive_load_futures.emplace_back(ThreadPool::Get().thread_pool.submit_task(
+          [&asset, &path, &out_model, &gltf_primitive, curr_mesh_idx]() -> Data {
+            Data ret;
+            ret.mesh_idx = curr_mesh_idx;
 
-      auto primitive_type = static_cast<PrimitiveType>(gltf_primitive.type);
-      // bool has_material = false;
-      size_t base_color_tex_coord_idx = 0;
-      if (gltf_primitive.materialIndex.has_value()) {
-        // has_material = true;
-        // TODO: add material uniforms idx to primitive
+            auto* position_it = gltf_primitive.findAttribute("POSITION");
+            if (position_it == gltf_primitive.attributes.end()) {
+              spdlog::error("glTF Mesh does not contain POSITION attribute");
+              return Data{};
+            }
+            EASSERT_MSG(gltf_primitive.indicesAccessor.has_value(),
+                        "Must specify to generate indices");
 
-        out_primitive.material_handle =
-            out_model.material_handles[gltf_primitive.materialIndex.value()];
-        auto& material = asset.materials[gltf_primitive.materialIndex.value()];
-        auto& base_color_tex = material.pbrData.baseColorTexture;
-        if (base_color_tex.has_value()) {
-          if (base_color_tex->transform && base_color_tex->transform->texCoordIndex.has_value()) {
-            base_color_tex_coord_idx = base_color_tex->transform->texCoordIndex.value();
-          } else {
-            base_color_tex_coord_idx = material.pbrData.baseColorTexture->texCoordIndex;
-          }
-        } else {
-        }
-      }
+            ret.primitive_type = static_cast<PrimitiveType>(gltf_primitive.type);
+            // bool has_material = false;
+            size_t base_color_tex_coord_idx = 0;
+            if (gltf_primitive.materialIndex.has_value()) {
+              // has_material = true;
+              // TODO: add material uniforms idx to primitive
 
-      // Position
-      auto& position_accessor = asset.accessors[position_it->second];
-      if (!position_accessor.bufferViewIndex.has_value()) {
-        spdlog::error("no position accessor for primitive at model path {}", path.string());
-        continue;
-      }
-      const auto* tex_coord_iter = gltf_primitive.findAttribute(
-          std::string("TEXCOORD_") + std::to_string(base_color_tex_coord_idx));
-      const auto* normal_iter = gltf_primitive.findAttribute("NORMAL");
-      const auto* tangent_iter = gltf_primitive.findAttribute("TANGENT");
+              ret.material_handle =
+                  out_model.material_handles[gltf_primitive.materialIndex.value()];
+              auto& material = asset.materials[gltf_primitive.materialIndex.value()];
+              auto& base_color_tex = material.pbrData.baseColorTexture;
+              if (base_color_tex.has_value()) {
+                if (base_color_tex->transform &&
+                    base_color_tex->transform->texCoordIndex.has_value()) {
+                  base_color_tex_coord_idx = base_color_tex->transform->texCoordIndex.value();
+                } else {
+                  base_color_tex_coord_idx = material.pbrData.baseColorTexture->texCoordIndex;
+                }
+              }
+            }
 
-      const bool has_tex_coords =
-          tex_coord_iter != gltf_primitive.attributes.end() &&
-          asset.accessors[tex_coord_iter->second].bufferViewIndex.has_value();
-      const bool has_normals = normal_iter != gltf_primitive.attributes.end() &&
-                               asset.accessors[normal_iter->second].bufferViewIndex.has_value();
-      const bool has_tangents = tangent_iter != gltf_primitive.attributes.end() &&
-                                asset.accessors[tangent_iter->second].bufferViewIndex.has_value();
-      if (auto* min = std::get_if<std::pmr::vector<double>>(&position_accessor.min)) {
-        if (min->size() != 3) {
-          spdlog::error("Cannot compute bounding box for primitive");
-        } else {
-          out_primitive.aabb.min = {(*min)[0], (*min)[1], (*min)[2]};
-        }
-      }
+            // Position
+            auto& position_accessor = asset.accessors[position_it->second];
+            if (!position_accessor.bufferViewIndex.has_value()) {
+              spdlog::error("no position accessor for primitive at model path {}", path.string());
+              return Data{};
+            }
+            const auto* tex_coord_iter = gltf_primitive.findAttribute(
+                std::string("TEXCOORD_") + std::to_string(base_color_tex_coord_idx));
+            const auto* normal_iter = gltf_primitive.findAttribute("NORMAL");
+            const auto* tangent_iter = gltf_primitive.findAttribute("TANGENT");
 
-      if (auto* max = std::get_if<std::pmr::vector<double>>(&position_accessor.max)) {
-        if (max->size() != 3) {
-          spdlog::error("Cannot compute bounding box for primitive");
-        } else {
-          out_primitive.aabb.max = {(*max)[0], (*max)[1], (*max)[2]};
-        }
-      }
-      std::vector<Vertex> vertices(position_accessor.count);
-      fastgltf::iterateAccessorWithIndex<glm::vec3>(
-          asset, position_accessor,
-          [&vertices](glm::vec3 pos, size_t idx) { vertices[idx].position = pos; });
-      if (has_tex_coords) {
-        ZoneScopedN("Iterate tex coords");
-        auto& tex_coord_accessor = asset.accessors[tex_coord_iter->second];
-        fastgltf::iterateAccessorWithIndex<glm::vec2>(
-            asset, tex_coord_accessor,
-            [&vertices](glm::vec2 uv, size_t idx) { vertices[idx].uv = uv; });
-      }
-      if (has_normals) {
-        ZoneScopedN("Iterate normals");
-        auto& normal_accessor = asset.accessors[normal_iter->second];
-        fastgltf::iterateAccessorWithIndex<glm::vec3>(
-            asset, normal_accessor,
-            [&vertices](glm::vec3 normal, size_t idx) { vertices[idx].normal = normal; });
-      }
-      if (has_tangents) {
-        ZoneScopedN("Iterate tangents");
-        auto& tangent_accessor = asset.accessors[tangent_iter->second];
-        fastgltf::iterateAccessorWithIndex<glm::vec4>(
-            asset, tangent_accessor, [&vertices](glm::vec4 tangent, size_t idx) {
-              vertices[idx].tangent = glm::vec3{tangent.x, tangent.y, tangent.z};
-            });
-      }
+            const bool has_tex_coords =
+                tex_coord_iter != gltf_primitive.attributes.end() &&
+                asset.accessors[tex_coord_iter->second].bufferViewIndex.has_value();
+            const bool has_normals =
+                normal_iter != gltf_primitive.attributes.end() &&
+                asset.accessors[normal_iter->second].bufferViewIndex.has_value();
+            const bool has_tangents =
+                tangent_iter != gltf_primitive.attributes.end() &&
+                asset.accessors[tangent_iter->second].bufferViewIndex.has_value();
+            if (auto* min = std::get_if<std::pmr::vector<double>>(&position_accessor.min)) {
+              if (min->size() != 3) {
+                spdlog::error("Cannot compute bounding box for primitive");
+              } else {
+                ret.aabb.min = {(*min)[0], (*min)[1], (*min)[2]};
+              }
+            }
 
-      if (!has_normals) {
-        // TODO: use diff vertex layout
-        spdlog::error("model does not have normals, not supported");
-      }
-      if (!has_tex_coords) {
-        // TODO: use diff vertex layout
-        spdlog::error("model does not have tex coords, not supported");
-      }
+            if (auto* max = std::get_if<std::pmr::vector<double>>(&position_accessor.max)) {
+              if (max->size() != 3) {
+                spdlog::error("Cannot compute bounding box for primitive");
+              } else {
+                ret.aabb.max = {(*max)[0], (*max)[1], (*max)[2]};
+              }
+            }
+            ret.vertices.resize(position_accessor.count);
+            fastgltf::iterateAccessorWithIndex<glm::vec3>(
+                asset, position_accessor,
+                [&ret](glm::vec3 pos, size_t idx) { ret.vertices[idx].position = pos; });
+            if (has_tex_coords) {
+              ZoneScopedN("Iterate tex coords");
+              auto& tex_coord_accessor = asset.accessors[tex_coord_iter->second];
+              fastgltf::iterateAccessorWithIndex<glm::vec2>(
+                  asset, tex_coord_accessor,
+                  [&ret](glm::vec2 uv, size_t idx) { ret.vertices[idx].uv = uv; });
+            }
+            if (has_normals) {
+              ZoneScopedN("Iterate normals");
+              auto& normal_accessor = asset.accessors[normal_iter->second];
+              fastgltf::iterateAccessorWithIndex<glm::vec3>(
+                  asset, normal_accessor,
+                  [&ret](glm::vec3 normal, size_t idx) { ret.vertices[idx].normal = normal; });
+            }
+            if (has_tangents) {
+              ZoneScopedN("Iterate tangents");
+              auto& tangent_accessor = asset.accessors[tangent_iter->second];
+              fastgltf::iterateAccessorWithIndex<glm::vec4>(
+                  asset, tangent_accessor, [&ret](glm::vec4 tangent, size_t idx) {
+                    ret.vertices[idx].tangent = glm::vec3{tangent.x, tangent.y, tangent.z};
+                  });
+            }
 
-      // Allocate indices, using mapped index buffer
-      auto& index_accessor = asset.accessors[gltf_primitive.indicesAccessor.value()];
-      if (!index_accessor.bufferViewIndex.has_value()) {
-        spdlog::info("no index accessor buffer view index for primitive at path {}", path.string());
-        continue;
-      }
-      std::vector<uint32_t> indices(index_accessor.count);
-      if (index_accessor.componentType == fastgltf::ComponentType::UnsignedByte ||
-          index_accessor.componentType == fastgltf::ComponentType::UnsignedShort) {
-        std::vector<uint16_t> short_indices(index_accessor.count);
-        fastgltf::copyFromAccessor<uint16_t>(asset, index_accessor, short_indices.data());
-        std::transform(short_indices.begin(), short_indices.end(), indices.begin(),
-                       [](uint16_t val) { return static_cast<uint32_t>(val); });
-      } else {
-        fastgltf::copyFromAccessor<uint32_t>(asset, index_accessor, indices.data());
-      }
+            if (!has_normals) {
+              // TODO: use diff vertex layout
+              spdlog::error("model does not have normals, not supported");
+            }
+            if (!has_tex_coords) {
+              // TODO: use diff vertex layout
+              spdlog::error("model does not have tex coords, not supported");
+            }
 
-      // Calc tangents using Mikktspace
-      if (!has_tangents) {
-        CalcTangents(vertices, indices);
-      }
+            // Allocate indices, using mapped index buffer
+            auto& index_accessor = asset.accessors[gltf_primitive.indicesAccessor.value()];
+            ret.indices.resize(index_accessor.count);
+            if (!index_accessor.bufferViewIndex.has_value()) {
+              spdlog::info("no index accessor buffer view index for primitive at path {}",
+                           path.string());
+              return Data{};
+            }
+            if (index_accessor.componentType == fastgltf::ComponentType::UnsignedByte ||
+                index_accessor.componentType == fastgltf::ComponentType::UnsignedShort) {
+              std::vector<uint16_t> short_indices(index_accessor.count);
+              fastgltf::copyFromAccessor<uint16_t>(asset, index_accessor, short_indices.data());
+              std::transform(short_indices.begin(), short_indices.end(), ret.indices.begin(),
+                             [](uint16_t val) { return static_cast<uint32_t>(val); });
+            } else {
+              fastgltf::copyFromAccessor<uint32_t>(asset, index_accessor, ret.indices.data());
+            }
 
-      out_primitive.mesh_handle = renderer.AllocateMesh<Vertex>(vertices, indices, primitive_type);
-      out_mesh.primitives.emplace_back(out_primitive);
+            // Calc tangents using Mikktspace
+            if (!has_tangents) {
+              CalcTangents(ret.vertices, ret.indices);
+            }
+
+            // out_primitive.mesh_handle =
+            //     renderer.AllocateMesh<Vertex>(vertices, indices, primitive_type);
+            return ret;
+          }));
+
+      // out_primitive.mesh_handle = renderer.AllocateMesh<Vertex>(vertices, indices,
+      // primitive_type);
+      // out_mesh.primitives.emplace_back(out_primitive);
     }
-    out_model.meshes.emplace_back(out_mesh);
+    // out_model.meshes.emplace_back(out_mesh);
   }
+
+  out_model.meshes.resize(asset.meshes.size());
+  for (auto& future : primitive_load_futures) {
+    Data d = future.get();
+    out_model.meshes[d.mesh_idx].primitives.emplace_back(Primitive{
+        .aabb = d.aabb,
+        .material_handle = d.material_handle,
+        .mesh_handle = renderer.AllocateMesh<Vertex>(d.vertices, d.indices, d.primitive_type)});
+  }
+
   if (asset.scenes.size() != 1) {
     spdlog::error("model loader: multiple scenes not supported");
   }

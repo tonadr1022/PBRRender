@@ -56,9 +56,9 @@ enum class AlphaMode {
 };
 
 struct Primitive {
-  AssetHandle mesh_handle{};
-  AssetHandle material_handle{};
   AABB aabb{};
+  AssetHandle material_handle{};
+  AssetHandle mesh_handle{};
 };
 
 struct Mesh {

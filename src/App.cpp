@@ -78,8 +78,8 @@ void App::Run() {
       "textured", {{GET_SHADER_PATH("textured.vs.glsl"), gl::ShaderType::kVertex, {}},
                    {GET_SHADER_PATH("textured.fs.glsl"), gl::ShaderType::kFragment, {}}});
   renderer_.Init();
-  OnModelChange("/home/tony/abeautifulgame.glb");
-  // OnModelChange("/home/tony/glTF-Sample-Assets/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
+  // OnModelChange("/home/tony/abeautifulgame.glb");
+  OnModelChange("/home/tony/glTF-Sample-Assets/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
   renderer_.SubmitPointLights(point_lights);
 
   uint64_t curr_time = SDL_GetPerformanceCounter();
