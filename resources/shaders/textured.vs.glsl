@@ -21,6 +21,8 @@ struct UniformData {
 
 layout(std140, binding = 0) uniform UBOUniforms {
     mat4 vp_matrix;
+    mat4 view_matrix;
+    mat4 proj_matrix;
     vec3 view_pos;
 };
 

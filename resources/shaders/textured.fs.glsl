@@ -14,6 +14,8 @@ out vec4 o_color;
 
 layout(std140, binding = 0) uniform UBOUniforms {
     mat4 vp_matrix;
+    mat4 view_matrix;
+    mat4 proj_matrix;
     vec3 view_pos;
 };
 
@@ -115,9 +117,10 @@ void main() {
         normal = normalize(fs_in.normal);
     }
 
+    vec3 albedo = base_color.rgb;
     vec3 V = normalize(view_pos - fs_in.pos_world_space);
     vec3 F0 = vec3(0.04);
-    F0 = mix(F0, base_color.rgb, metallic);
+    F0 = mix(F0, albedo.rgb, metallic);
 
     vec3 light_out = vec3(0.0);
     if (point_lights_enabled) {
@@ -137,7 +140,7 @@ void main() {
             vec3 kD = vec3(1.0) - kS;
             kD *= 1.0 - metallic;
             float NdotL = max(dot(normal, L), 0.0);
-            light_out += (kD * base_color.rgb / PI + specular) * radiance * NdotL;
+            light_out += (kD * albedo.rgb / PI + specular) * radiance * NdotL;
         }
     }
 
@@ -156,7 +159,7 @@ void main() {
         kD *= 1.0 - metallic;
         // scale light by NdotL
         float NdotL = max(dot(normal, L), 0.0);
-        vec3 directional_out = ((kD * base_color.rgb / PI + specular) * radiance * NdotL);
+        vec3 directional_out = ((kD * albedo.rgb / PI + specular) * radiance * NdotL);
         light_out += directional_out;
     }
 
@@ -168,7 +171,7 @@ void main() {
     }
 
     vec3 color = light_out + emissive;
-    // color = color / (color + vec3(1.0));
+    color = color / (color + vec3(1.0));
     // color = pow(color, vec3(1.0 / 2.2));
     o_color = vec4(color, base_color.a);
 }

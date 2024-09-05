@@ -7,6 +7,7 @@
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
 
+#include "Image.hpp"
 #include "pch.hpp"
 #include "util/ThreadPool.hpp"
 
@@ -18,7 +19,6 @@
 #include "Renderer.hpp"
 #include "ResourceManager.hpp"
 #include "gl/Texture.hpp"
-#include "stb_image_impl.hpp"
 #include "types.hpp"
 #include "util/Timer.hpp"
 
@@ -175,11 +175,6 @@ std::optional<fastgltf::Asset> LoadGLTFAsset(const std::filesystem::path& path) 
   return {};
 }
 
-struct Image {
-  unsigned char* data{};
-  int width{}, height{}, channels{};
-};
-
 }  // namespace
 
 namespace loader {
@@ -211,54 +206,36 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
         fastgltf::visitor{
             [](auto&) {},
             [&path, &futures](fastgltf::sources::URI& file_path) {
-              futures.emplace_back(ThreadPool::Get().thread_pool.submit_task([&file_path, &path]() {
-                int w, h, channels;
-                const std::string image_file_name(file_path.uri.path().begin(),
-                                                  file_path.uri.path().end());
-                const std::filesystem::path full_path = path.parent_path() / image_file_name;
-                if (!std::filesystem::exists(full_path)) {
-                  spdlog::error("uh oh {} {} ", path.parent_path().string(), full_path.string());
-                }
-                unsigned char* data = stbi_load(full_path.string().data(), &w, &h, &channels, 4);
-                return Image{.data = data, .width = w, .height = h, .channels = channels};
-              }));
+              futures.emplace_back(
+                  ThreadPool::Get().thread_pool.submit_task([&file_path, &path]() -> Image {
+                    const std::string image_file_name(file_path.uri.path().begin(),
+                                                      file_path.uri.path().end());
+                    const std::filesystem::path full_path = path.parent_path() / image_file_name;
+                    if (!std::filesystem::exists(full_path)) {
+                      spdlog::error("path does not exist {}", full_path.string());
+                      return Image{};
+                    }
+                    return Image{full_path.string(), 4, false};
+                  }));
             },
-            [&images, &futures](fastgltf::sources::Array& vector) {
-              futures.emplace_back(ThreadPool::Get().thread_pool.submit_task([&vector]() {
-                int w, h, channels;
-                spdlog::info("load from memory");
-                unsigned char* data = stbi_load_from_memory(
-                    reinterpret_cast<const stbi_uc*>(vector.bytes.data()),
-                    static_cast<int>(vector.bytes.size_bytes()), &w, &h, &channels, 4);
-                return Image{.data = data, .width = w, .height = h, .channels = channels};
-              }));
-              int w, h, channels;
-              spdlog::info("load from memory");
-              unsigned char* data = stbi_load_from_memory(
-                  reinterpret_cast<const stbi_uc*>(vector.bytes.data()),
-                  static_cast<int>(vector.bytes.size_bytes()), &w, &h, &channels, 4);
-              images.emplace_back(
-                  Image{.data = data, .width = w, .height = h, .channels = channels});
+            [&futures](fastgltf::sources::Array& vector) {
+              futures.emplace_back(ThreadPool::Get().thread_pool.submit_task(
+                  [&vector]() { return Image{vector.bytes.data(), vector.bytes.size(), 4}; }));
             },
             [&asset, &futures](fastgltf::sources::BufferView& view) {
               auto& buffer_view = asset.bufferViews[view.bufferViewIndex];
               auto& buffer = asset.buffers[buffer_view.bufferIndex];
-              std::visit(
-                  fastgltf::visitor{
-                      [](auto&) {},
-                      [&futures, &buffer_view](fastgltf::sources::Array& vector) {
-                        futures.emplace_back(
-                            ThreadPool::Get().thread_pool.submit_task([&vector, &buffer_view]() {
-                              int w, h, channels;
-                              unsigned char* data = stbi_load_from_memory(
-                                  reinterpret_cast<const stbi_uc*>(vector.bytes.data() +
-                                                                   buffer_view.byteOffset),
-                                  static_cast<int>(buffer_view.byteLength), &w, &h, &channels, 4);
-                              return Image{
-                                  .data = data, .width = w, .height = h, .channels = channels};
-                            }));
-                      }},
-                  buffer.data);
+              std::visit(fastgltf::visitor{
+                             [](auto&) {},
+                             [&futures, &buffer_view](fastgltf::sources::Array& vector) {
+                               futures.emplace_back(ThreadPool::Get().thread_pool.submit_task(
+                                   [&vector, &buffer_view]() {
+                                     ZoneScopedN("Image Load from memory");
+                                     return Image{vector.bytes.data() + buffer_view.byteOffset,
+                                                  vector.bytes.size(), 4};
+                                   }));
+                             }},
+                         buffer.data);
             }},
         image.data);
   }
@@ -272,11 +249,10 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
 
   out_model.texture_handles.resize(asset.textures.size());
   int num_textures = 0;
-  auto load_texture_and_set_handle = [&path, &asset, &num_textures, &out_model, &images,
-                                      &resource_manager](uint64_t& out_handle,
-                                                         fastgltf::TextureInfo& tex_info,
-
-                                                         GLuint internal_format) -> bool {
+  auto load_texture_and_set_handle =
+      [&path, &asset, &num_textures, &out_model, &images, &resource_manager](
+          uint64_t& out_handle, fastgltf::TextureInfo& tex_info, GLuint internal_format) -> bool {
+    ZoneScopedN("Load tex and set handle");
     size_t tex_idx = tex_info.textureIndex;
     auto img_idx = asset.textures[tex_idx].imageIndex;
     if (!img_idx.has_value()) {
@@ -295,7 +271,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
                             .type = GL_UNSIGNED_BYTE,
                             .min_filter = GL_LINEAR,
                             .mag_filter = GL_LINEAR,
-                            .data = img.data,
+                            .data = static_cast<unsigned char*>(img.data),
                             .bindless = true,
                             .gen_mipmaps = true});
 
@@ -384,7 +360,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
   }
 
   for (auto& img : images) {
-    stbi_image_free(img.data);
+    img.Free();
   }
 
   struct Data {
@@ -404,6 +380,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
     for (auto& gltf_primitive : mesh.primitives) {
       primitive_load_futures.emplace_back(ThreadPool::Get().thread_pool.submit_task(
           [&asset, &path, &out_model, &gltf_primitive, curr_mesh_idx]() -> Data {
+            ZoneScopedN("Process primitive");
             Data ret;
             ret.mesh_idx = curr_mesh_idx;
 
@@ -577,8 +554,8 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
                      [&](fastgltf::Camera::Perspective& perspective) {
                        float aspect_ratio = perspective.aspectRatio.value_or(camera_aspect_ratio);
                        proj_mat = glm::mat4{0};
-                       proj_mat[0][0] = 1.f / (aspect_ratio * tan(0.5f * perspective.yfov));
-                       proj_mat[1][1] = 1.f / (tan(0.5f * perspective.yfov));
+                       proj_mat[0][0] = 1.f / (aspect_ratio * tan(0.5 * perspective.yfov));
+                       proj_mat[1][1] = 1.f / (tan(0.5 * perspective.yfov));
                        proj_mat[2][3] = -1;
 
                        if (perspective.zfar.has_value()) {

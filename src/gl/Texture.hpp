@@ -16,6 +16,20 @@ struct Tex2DCreateInfo {
   bool gen_mipmaps{true};
 };
 
+struct Tex2DCreateInfoLoadImage {
+  const char* path;
+  GLuint wrap_s;
+  GLuint wrap_t;
+  GLuint internal_format;
+  GLuint format;
+  GLenum type;
+  GLuint min_filter{GL_LINEAR};
+  GLuint mag_filter{GL_LINEAR};
+  bool bindless{true};
+  bool gen_mipmaps{true};
+  bool flip_image{true};
+};
+
 struct Tex2DCreateInfoEmpty {
   glm::ivec2 dims;
   GLuint wrap_s;
@@ -25,12 +39,23 @@ struct Tex2DCreateInfoEmpty {
   GLuint mag_filter{GL_LINEAR};
 };
 
+struct TexCubeCreateParamsEmpty {
+  glm::ivec2 dims;
+  GLuint internal_format;
+  GLuint wrap_s, wrap_t, wrap_r;
+  GLuint min_filter, mag_filter;
+};
+
 class Texture {
  public:
   Texture() = default;
   void Load(const Tex2DCreateInfoEmpty& params);
+  void Load(const TexCubeCreateParamsEmpty& params);
   void Load(const Tex2DCreateInfo& params);
+  void Load(const Tex2DCreateInfoLoadImage& params);
   explicit Texture(const Tex2DCreateInfoEmpty& params);
+  explicit Texture(const TexCubeCreateParamsEmpty& params);
+  explicit Texture(const Tex2DCreateInfoLoadImage& params);
   explicit Texture(const Tex2DCreateInfo& params);
   Texture(const Texture& other) = delete;
   Texture operator=(const Texture& other) = delete;

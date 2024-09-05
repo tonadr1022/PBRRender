@@ -1,5 +1,8 @@
 #include "Renderer.hpp"
 
+#include "gl/VertexArray.hpp"
+#include "pch.hpp"
+
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -13,11 +16,13 @@ const std::vector<float> kQuadVertices = {
     -1.0f, 1.0f, 0.0f, 0.0f, 1.0f, -1.0f, -1.0f, 0.0f, 0.0f, 0.0f,
     1.0f,  1.0f, 0.0f, 1.0f, 1.0f, 1.0f,  -1.0f, 0.0f, 1.0f, 0.0f,
 };
-}
+
+}  // namespace
 
 void Renderer::Init() {
   glEnable(GL_DEBUG_OUTPUT);
   glDebugMessageCallback(gl::MessageCallback, nullptr);
+
   uniform_ubo_.Init(1, GL_DYNAMIC_STORAGE_BIT, nullptr);
   pos_tex_vbo_.Init(10000000, sizeof(Vertex));
 
@@ -37,6 +42,7 @@ void Renderer::Init() {
 }
 
 AssetHandle Renderer::AllocateMaterial(const Material& material, AlphaMode) {
+  ZoneScoped;
   // TODO: handle opaque vs blend
   // TODO: templatize for other material types?
   uint32_t offset;
@@ -49,6 +55,8 @@ AssetHandle Renderer::AllocateMaterial(const Material& material, AlphaMode) {
   }
   return mat_handle;
 }
+
+void Renderer::Shutdown() {}
 
 void Renderer::FreeMesh(AssetHandle& handle) {
   if (handle == 0) return;
@@ -162,6 +170,8 @@ void Renderer::SubmitStaticModel(Model& model, const glm::mat4& model_matrix) {
 
 void Renderer::DrawStaticOpaque(const RenderInfo& render_info) {
   UBOUniforms uniform_data{.vp_matrix = render_info.projection_matrix * render_info.view_matrix,
+                           .view_matrix = render_info.view_matrix,
+                           .proj_matrix = render_info.projection_matrix,
                            .view_pos = render_info.view_pos};
   uniform_ubo_.SubDataStart(1, &uniform_data);
   uniform_ubo_.BindBase(GL_UNIFORM_BUFFER, 0);

@@ -14,6 +14,7 @@ struct RenderInfo {
 class Renderer {
  public:
   void Init();
+  void Shutdown();
 
   template <typename VertexType>
   [[nodiscard]] AssetHandle AllocateMesh(std::vector<VertexType>& vertices,
@@ -75,6 +76,8 @@ class Renderer {
 
   struct UBOUniforms {
     glm::mat4 vp_matrix;
+    glm::mat4 view_matrix;
+    glm::mat4 proj_matrix;
     glm::vec3 view_pos;
   };
 

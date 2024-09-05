@@ -7,6 +7,7 @@
 #include <glm/ext/matrix_transform.hpp>
 #include <random>
 
+#include "CubeMapConverter.hpp"
 #include "Input.hpp"
 #include "MeshLoader.hpp"
 #include "Path.hpp"
@@ -15,6 +16,7 @@
 #include "ResourceManager.hpp"
 #include "Window.hpp"
 #include "gl/ShaderManager.hpp"
+#include "gl/Texture.hpp"
 #include "types.hpp"
 #include "util/ThreadPool.hpp"
 
@@ -60,27 +62,46 @@ void App::OnModelChange(const std::string& model) {
 
 void App::Run() {
   ThreadPool::Init();
+  gl::ShaderManager::Init();
+  gl::ShaderManager::Get().AddShader(
+      "textured", {{GET_SHADER_PATH("textured.vs.glsl"), gl::ShaderType::kVertex, {}},
+                   {GET_SHADER_PATH("textured.fs.glsl"), gl::ShaderType::kFragment, {}}});
+  renderer_.Init();
+
+  CubeMapConverter cube_map_converter;
+  cube_map_converter.Init();
+  const char* k_hdr_img_path = GET_PATH("resources/textures/hdr/newport_loft.hdr");
+  AssetHandle hdr_equirect_handle = resource_manager_.Load<gl::Texture>(
+      k_hdr_img_path, gl::Tex2DCreateInfoLoadImage{.path = k_hdr_img_path,
+                                                   .wrap_s = GL_CLAMP_TO_EDGE,
+                                                   .wrap_t = GL_CLAMP_TO_EDGE,
+                                                   .internal_format = GL_RGB16F,
+                                                   .format = GL_RGB,
+                                                   .type = GL_FLOAT,
+                                                   .min_filter = GL_LINEAR,
+                                                   .mag_filter = GL_LINEAR,
+                                                   .bindless = false,
+                                                   .gen_mipmaps = false,
+                                                   .flip_image = true});
+  cube_map_converter.RenderEquirectangularEnvMap(
+      *resource_manager_.Get<gl::Texture>(hdr_equirect_handle));
+
   RandomGen g(-10, 10);
   for (int i = 0; i < 100; i++) {
     glm::vec3 color = {g.Get(), g.Get() / 2, g.Get()};
     point_lights.emplace_back(
         PointLight{.position = color, ._pad1 = 0, .color = glm::vec3{1}, .intensity = 0.1});
   }
+  renderer_.SubmitPointLights(point_lights);
 
-  file_dialog.SetTitle("title");
+  file_dialog.SetTitle("Select GLTF Model");
   file_dialog.SetTypeFilters({".gltf", ".glb"});
   file_dialog.SetCurrentDirectory(std::filesystem::path("/home/tony/glTF-Sample-Assets/Models"));
   player_.SetPosition({-2, 1, 0});
   player_.LookAt({0, 0, 0});
 
-  gl::ShaderManager::Init();
-  gl::ShaderManager::Get().AddShader(
-      "textured", {{GET_SHADER_PATH("textured.vs.glsl"), gl::ShaderType::kVertex, {}},
-                   {GET_SHADER_PATH("textured.fs.glsl"), gl::ShaderType::kFragment, {}}});
-  renderer_.Init();
-  // OnModelChange("/home/tony/abeautifulgame.glb");
-  OnModelChange("/home/tony/glTF-Sample-Assets/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
-  renderer_.SubmitPointLights(point_lights);
+  OnModelChange("/home/tony/abeautifulgame.glb");
+  // OnModelChange("/home/tony/glTF-Sample-Assets/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
 
   uint64_t curr_time = SDL_GetPerformanceCounter();
   uint64_t prev_time = 0;
@@ -127,6 +148,7 @@ void App::Run() {
     glClearColor(0.1, 0.1, 0.1, 1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_FRAMEBUFFER_SRGB);
+    glViewport(0, 0, window_.GetWindowSize().x, window_.GetWindowSize().y);
 
     glEnable(GL_DEPTH_TEST);
     // TODO: separate back face cull vs no cull
@@ -140,6 +162,7 @@ void App::Run() {
     shader.SetVec3("u_directional_dir", lights_info.directional_dir);
     shader.SetVec3("u_directional_color", lights_info.directional_color);
     renderer_.DrawStaticOpaque(render_info);
+    cube_map_converter.Draw();
 
     if (imgui_enabled_) {
       OnImGui();
@@ -151,6 +174,7 @@ void App::Run() {
     glEnable(GL_FRAMEBUFFER_SRGB);
   }
 
+  renderer_.Shutdown();
   gl::ShaderManager::Shutdown();
   resource_manager_.Shutdown();
   window_.Shutdown();

@@ -23,6 +23,8 @@ set(SOURCES
     Renderer.cpp
     Window.cpp
     ResourceManager.cpp
+    Image.cpp
+    CubeMapConverter.cpp
 
     gl/OpenGLDebug.cpp
     gl/Texture.cpp
@@ -35,7 +37,7 @@ set(SOURCES
     util/ThreadPool.cpp
 )
 
-add_compile_definitions(SRC_PATH="${CMAKE_SOURCE_DIR}/")
+add_compile_definitions(SRC_PATH="${CMAKE_SOURCE_DIR}")
 add_executable(${PROJECT_NAME} ${SOURCES})
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")

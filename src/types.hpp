@@ -22,6 +22,10 @@ struct Vertex {
   glm::vec2 uv;
 };
 
+struct VertexPosOnly {
+  glm::vec3 pos;
+};
+
 // need to handle:
 // metallic_roughness
 // occlusion_roughness_metallic
