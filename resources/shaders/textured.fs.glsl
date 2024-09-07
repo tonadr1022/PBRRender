@@ -64,7 +64,10 @@ uniform bool directional_light_enabled = true;
 uniform vec3 u_directional_dir;
 uniform vec3 u_directional_color;
 
+uniform samplerCube irradiance_map;
+
 vec3 FresnelSchlick(float cosTheta, vec3 F0);
+vec3 FresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness);
 float DistributionGGX(vec3 normal, vec3 halfVector, float roughness);
 float GeometrySchlickGGX(float NdotV, float roughness);
 float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness);
@@ -124,7 +127,7 @@ void main() {
 
     vec3 light_out = vec3(0.0);
     if (point_lights_enabled) {
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < 1; i++) {
             vec3 L = normalize(pointLights[i].position.xyz - fs_in.pos_world_space);
             vec3 H = normalize(V + L);
             float dist_to_light = length(pointLights[i].position.xyz - fs_in.pos_world_space);
@@ -170,8 +173,15 @@ void main() {
         emissive = mat.emissive_factor.rgb * mat.emissive_strength;
     }
 
-    vec3 color = light_out + emissive;
-    color = color / (color + vec3(1.0));
+    vec3 kS = FresnelSchlickRoughness(clamp(dot(normal, V), 0.0, 1.0), F0, roughness);
+    vec3 kD = 1.0 - kS;
+    kD *= 1.0 - metallic;
+    vec3 irradiance = texture(irradiance_map, normal).rgb;
+    vec3 diffuse = irradiance * albedo;
+    vec3 ambient = (kD * diffuse);
+
+    vec3 color = light_out + emissive + ambient;
+    // color = color / (color + vec3(1.0));
     // color = pow(color, vec3(1.0 / 2.2));
     o_color = vec4(color, base_color.a);
 }
@@ -180,6 +190,9 @@ void main() {
 // varies per material. tinted on metals. Common practice is to use 0.04 for dielectrics
 vec3 FresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+vec3 FresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
 // D in the Cook-Torrance BRDF: normal Distribution function.

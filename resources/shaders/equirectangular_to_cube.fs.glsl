@@ -1,7 +1,7 @@
 #version 460 core
 
 layout(location = 0) in VS_OUT {
-    vec3 local_pos;
+    vec3 world_pos;
 } fs_in;
 
 uniform sampler2D equirectangular_map;
@@ -21,6 +21,6 @@ vec2 SampleSphericalMap(vec3 v) {
 }
 
 void main() {
-    vec2 uv = SampleSphericalMap(normalize(fs_in.local_pos));
+    vec2 uv = SampleSphericalMap(normalize(fs_in.world_pos));
     o_color = vec4(texture(equirectangular_map, uv).rgb, 1.0);
 }

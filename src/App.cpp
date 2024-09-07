@@ -100,7 +100,8 @@ void App::Run() {
   player_.SetPosition({-2, 1, 0});
   player_.LookAt({0, 0, 0});
 
-  OnModelChange("/home/tony/abeautifulgame.glb");
+  // OnModelChange("/home/tony/abeautifulgame.glb");
+  OnModelChange("/home/tony/toycar.glb");
   // OnModelChange("/home/tony/glTF-Sample-Assets/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
 
   uint64_t curr_time = SDL_GetPerformanceCounter();
@@ -162,7 +163,9 @@ void App::Run() {
     shader.SetVec3("u_directional_dir", lights_info.directional_dir);
     shader.SetVec3("u_directional_color", lights_info.directional_color);
     renderer_.DrawStaticOpaque(render_info);
+    cube_map_converter.irradiance_map.Bind(0);
     cube_map_converter.Draw();
+    // cube_map_converter.DrawIrradiance();
 
     if (imgui_enabled_) {
       OnImGui();
@@ -219,7 +222,7 @@ void App::OnImGui() {
     window_.SetVsync(vsync);
   }
 
-  if (ImGui::CollapsingHeader("Point Lights", ImGuiTreeNodeFlags_DefaultOpen)) {
+  if (ImGui::CollapsingHeader("Point Lights")) {
     ImGui::Checkbox("Enabled", &point_lights_enabled);
     int i = 0;
     for (auto& light : point_lights) {
@@ -248,7 +251,7 @@ void App::OnImGui() {
     file_dialog.ClearSelected();
   }
 
-  if (ImGui::CollapsingHeader("Directional Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+  if (ImGui::CollapsingHeader("Directional Light")) {
     ImGui::Checkbox("Enabled", &directional_light_enabled);
     ImGui::ColorEdit3("Directional Color", &lights_info.directional_color.x);
     ImGui::SliderFloat3("Directional Direction", &lights_info.directional_dir.x, -1, 1);

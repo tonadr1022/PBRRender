@@ -30,16 +30,16 @@ void UpdateNodeAndChildTransforms(Model& model, SceneNode& node) {
   traversal_stack.emplace(&node, glm::mat4(1));
 
   while (!traversal_stack.empty()) {
-    SceneNode& node = *traversal_stack.top().first;
-    Transform& transform = node.transform;
+    SceneNode* node = traversal_stack.top().first;
+    Transform& transform = node->transform;
     transform.dirty = false;
     glm::mat4 local_transform = glm::translate(glm::mat4(1), transform.translation) *
                                 glm::mat4_cast(transform.rotation) *
                                 glm::scale(glm::mat4(1), transform.scale);
-    node.model_matrix = local_transform * traversal_stack.top().second;
+    node->model_matrix = local_transform * traversal_stack.top().second;
     traversal_stack.pop();
-    for (size_t child_idx : node.child_indices) {
-      traversal_stack.emplace(&model.nodes[child_idx], node.model_matrix);
+    for (size_t child_idx : node->child_indices) {
+      traversal_stack.emplace(&model.nodes[child_idx], node->model_matrix);
     }
   }
 }
@@ -201,7 +201,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
   images.reserve(asset.images.size());
   std::vector<std::future<Image>> futures;
   for (fastgltf::Image& image : asset.images) {
-    ZoneScopedN("Image process");
+    ZoneScopedN("Image load");
     std::visit(
         fastgltf::visitor{
             [](auto&) {},
@@ -604,6 +604,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
   out_model.scene_0_nodes = {asset.scenes[0].nodeIndices.begin(),
                              asset.scenes[0].nodeIndices.end()};
   for (auto idx : out_model.scene_0_nodes) {
+    if (asset.nodes[idx].cameraIndex.has_value()) continue;
     UpdateNodeAndChildTransforms(out_model, out_model.nodes[idx]);
   }
   return out_model;

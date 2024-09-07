@@ -5,11 +5,19 @@
 #include "gl/ShaderManager.hpp"
 #include "pch.hpp"
 
+namespace {
+glm::ivec2 irradiance_dims = {32, 32};
+}
 void CubeMapConverter::Init() {
   gl::ShaderManager::Get().AddShader(
       "equirectangular_to_cube",
-      {{GET_SHADER_PATH("equirectangular_to_cube.vs.glsl"), gl::ShaderType::kVertex, {}},
+      {{GET_SHADER_PATH("cubemap.vs.glsl"), gl::ShaderType::kVertex, {}},
        {GET_SHADER_PATH("equirectangular_to_cube.fs.glsl"), gl::ShaderType::kFragment, {}}});
+  gl::ShaderManager::Get().AddShader(
+      "irradiance_convolution",
+      {{GET_SHADER_PATH("cubemap.vs.glsl"), gl::ShaderType::kVertex, {}},
+       {GET_SHADER_PATH("ibl/irradiance_convolution.fs.glsl"), gl::ShaderType::kFragment, {}}});
+
   gl::ShaderManager::Get().AddShader(
       "env_map", {{GET_SHADER_PATH("env_map.vs.glsl"), gl::ShaderType::kVertex, {}},
                   {GET_SHADER_PATH("env_map.fs.glsl"), gl::ShaderType::kFragment, {}}});
@@ -35,6 +43,13 @@ void CubeMapConverter::Init() {
                                                  .wrap_r = GL_CLAMP_TO_EDGE,
                                                  .min_filter = GL_LINEAR,
                                                  .mag_filter = GL_LINEAR});
+  irradiance_map.Load(gl::TexCubeCreateParamsEmpty{.dims = irradiance_dims,
+                                                   .internal_format = GL_RGB16F,
+                                                   .wrap_s = GL_CLAMP_TO_EDGE,
+                                                   .wrap_t = GL_CLAMP_TO_EDGE,
+                                                   .wrap_r = GL_CLAMP_TO_EDGE,
+                                                   .min_filter = GL_LINEAR,
+                                                   .mag_filter = GL_LINEAR});
 }
 
 void CubeMapConverter::RenderEquirectangularEnvMap(const gl::Texture& texture) const {
@@ -60,23 +75,43 @@ void CubeMapConverter::RenderEquirectangularEnvMap(const gl::Texture& texture) c
   shader.SetMat4("u_projection", capture_proj_matrix);
   texture.Bind(0);
   glViewport(0, 0, dims.x, dims.y);
+  cube_pos_only_vao.Bind();
   for (int i = 0; i < 6; i++) {
     shader.SetMat4("u_view", capture_view_matrices[i]);
     glNamedFramebufferTexture2DEXT(capture_fbo, GL_COLOR_ATTACHMENT0,
                                    GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, env_cube_map.Id(), 0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    cube_pos_only_vao.Bind();
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+  }
+
+  glNamedRenderbufferStorage(capture_rbo, GL_DEPTH_COMPONENT24, irradiance_dims.x,
+                             irradiance_dims.y);
+  gl::Shader irradiance_shader =
+      gl::ShaderManager::Get().GetShader("irradiance_convolution").value();
+  irradiance_shader.Bind();
+  env_cube_map.Bind(0);
+  irradiance_shader.SetMat4("u_projection", capture_proj_matrix);
+  glViewport(0, 0, irradiance_dims.x, irradiance_dims.y);
+  for (int i = 0; i < 6; i++) {
+    irradiance_shader.SetMat4("u_view", capture_view_matrices[i]);
+    glNamedFramebufferTexture2DEXT(capture_fbo, GL_COLOR_ATTACHMENT0,
+                                   GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, irradiance_map.Id(), 0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glDrawArrays(GL_TRIANGLES, 0, 36);
   }
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void CubeMapConverter::Draw() {
+void CubeMapConverter::Draw(const gl::Texture& tex) const {
   glDepthFunc(GL_LEQUAL);
   gl::Shader shader = gl::ShaderManager::Get().GetShader("env_map").value();
   shader.Bind();
-  env_cube_map.Bind(0);
+  tex.Bind(0);
   cube_pos_only_vao.Bind();
   glDrawArrays(GL_TRIANGLES, 0, 36);
   glDepthFunc(GL_LESS);
 }
+
+void CubeMapConverter::DrawIrradiance() const { Draw(irradiance_map); }
+
+void CubeMapConverter::Draw() const { Draw(env_cube_map); }
