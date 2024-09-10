@@ -52,6 +52,7 @@ void App::OnModelChange(const std::string& model) {
     resource_manager_.Free<Model>(model_handle);
   }
   renderer_.ResetStaticDrawCommands();
+  cam_index = -1;
   model_handle = resource_manager_.Load<Model>(model, window_.GetAspectRatio());
   active_model = resource_manager_.Get<Model>(model_handle);
   renderer_.SubmitStaticModel(*active_model, glm::mat4(1));
@@ -109,8 +110,10 @@ void App::Run() {
   double dt = 0;
   SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
   SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
+
   glEnable(GL_MULTISAMPLE);
   glEnable(GL_FRAMEBUFFER_SRGB);
+  glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
   while (!window_.ShouldClose()) {
     prev_time = curr_time;
     curr_time = SDL_GetPerformanceCounter();
@@ -164,8 +167,9 @@ void App::Run() {
     shader.SetVec3("u_directional_color", lights_info.directional_color);
     renderer_.DrawStaticOpaque(render_info);
     cube_map_converter.irradiance_map.Bind(0);
-    cube_map_converter.Draw();
+    // cube_map_converter.Draw();
     // cube_map_converter.DrawIrradiance();
+    cube_map_converter.DrawPrefilter();
 
     if (imgui_enabled_) {
       OnImGui();

@@ -98,14 +98,14 @@ void main() {
     }
     if (mat.metallic_roughness_handle != 0 && (mat.material_flags & MATERIAL_FLAG_METALLIC_ROUGHNESS) != 0) {
         vec4 metallic_roughness_tex = texture(sampler2D(mat.metallic_roughness_handle), uv);
-        metallic = metallic_roughness_tex.r;
         roughness = metallic_roughness_tex.g;
+        metallic = metallic_roughness_tex.b;
     } else if (mat.metallic_roughness_handle != 0
             && (mat.material_flags & MATERIAL_FLAG_OCCLUSION_ROUGHNESS_METALLIC) != 0) {
         vec4 occ_rough_metallic_tex = texture(sampler2D(mat.metallic_roughness_handle), uv);
         ao = occ_rough_metallic_tex.r;
-        metallic = occ_rough_metallic_tex.b;
         roughness = occ_rough_metallic_tex.g;
+        metallic = occ_rough_metallic_tex.b;
     }
     if (mat.occlusion_handle != 0) {
         ao = texture(sampler2D(mat.occlusion_handle), uv).r;

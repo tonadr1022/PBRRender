@@ -7,8 +7,11 @@ layout(location = 0) in VS_OUT {
 } fs_in;
 
 uniform samplerCube env_map;
+uniform float lod = 1.2;
 
 void main() {
-    vec3 env_color = texture(env_map, fs_in.local_pos).rgb;
+    // vec3 env_color = texture(env_map, fs_in.local_pos).rgb;
+    vec3 env_color = textureLod(env_map, fs_in.local_pos, lod).rgb;
+
     o_color = vec4(env_color, 1.0);
 }

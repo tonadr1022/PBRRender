@@ -43,6 +43,10 @@ void Texture::Load(const TexCubeCreateParamsEmpty& params) {
   glTextureParameteri(id_, GL_TEXTURE_MIN_FILTER, params.min_filter);
   glTextureParameteri(id_, GL_TEXTURE_MAG_FILTER, params.mag_filter);
   glTextureStorage2D(id_, 1, params.internal_format, params.dims.x, params.dims.y);
+
+  if (params.gen_mipmaps) {
+    glGenerateTextureMipmap(id_);
+  }
 }
 
 void Texture::Load(const Tex2DCreateInfoEmpty& params) {

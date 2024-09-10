@@ -13,21 +13,24 @@ struct CubeMapConverter {
   void RenderEquirectangularEnvMap(const gl::Texture& texture) const;
   void Draw() const;
   void DrawIrradiance() const;
+  void DrawPrefilter() const;
 
   gl::VertexArray cube_pos_only_vao;
   gl::Buffer<VertexPosOnly> cube_pos_only_vbo;
 
+  // TODO: be specific and move to impl file
   glm::ivec2 dims{512, 512};
   gl::Texture env_cube_map;
   gl::Texture irradiance_map;
-  GLuint capture_fbo, capture_rbo;
+  gl::Texture prefilter_map;
 
   ~CubeMapConverter() {
     // TODO: RAII wrapper
-    glDeleteFramebuffers(1, &capture_fbo);
-    glDeleteRenderbuffers(1, &capture_rbo);
+    glDeleteFramebuffers(1, &capture_fbo_);
+    glDeleteRenderbuffers(1, &capture_rbo_);
   }
 
  private:
+  GLuint capture_fbo_, capture_rbo_;
   void Draw(const gl::Texture& tex) const;
 };

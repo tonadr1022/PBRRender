@@ -44,6 +44,7 @@ struct TexCubeCreateParamsEmpty {
   GLuint internal_format;
   GLuint wrap_s, wrap_t, wrap_r;
   GLuint min_filter, mag_filter;
+  bool gen_mipmaps{false};
 };
 
 class Texture {

@@ -263,6 +263,7 @@ Model LoadModel(ResourceManager& resource_manager, Renderer& renderer,
     auto& img = images[img_idx.value()];
     out_model.texture_handles[tex_idx] = resource_manager.Load<gl::Texture>(
         path.string() + std::to_string(num_textures++),
+        // TODO: address texture repeat using sampler
         gl::Tex2DCreateInfo{.dims = glm::ivec2{img.width, img.height},
                             .wrap_s = GL_REPEAT,
                             .wrap_t = GL_REPEAT,
