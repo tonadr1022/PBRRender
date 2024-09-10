@@ -10,7 +10,8 @@ class Texture;
 struct CubeMapConverter {
   void Init();
 
-  void RenderEquirectangularEnvMap(const gl::Texture& texture) const;
+  void RenderEquirectangularEnvMap(const gl::Texture& texture);
+  void DrawBRDFTexture();
   void Draw() const;
   void DrawIrradiance() const;
   void DrawPrefilter() const;
@@ -23,6 +24,7 @@ struct CubeMapConverter {
   gl::Texture env_cube_map;
   gl::Texture irradiance_map;
   gl::Texture prefilter_map;
+  gl::Texture brdf_lookup_tex;
 
   ~CubeMapConverter() {
     // TODO: RAII wrapper
@@ -31,6 +33,10 @@ struct CubeMapConverter {
   }
 
  private:
+  void RenderBRDFLookupTexture();
+  gl::VertexArray quad_vao_;
+  gl::Buffer<PosTexVertex> quad_vbo_;
+  gl::Buffer<uint32_t> quad_ebo_;
   GLuint capture_fbo_, capture_rbo_;
   void Draw(const gl::Texture& tex) const;
 };

@@ -65,6 +65,8 @@ uniform vec3 u_directional_dir;
 uniform vec3 u_directional_color;
 
 uniform samplerCube irradiance_map;
+uniform samplerCube prefilter_map;
+uniform sampler2D brdf_lookup;
 
 vec3 FresnelSchlick(float cosTheta, vec3 F0);
 vec3 FresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness);
@@ -173,12 +175,21 @@ void main() {
         emissive = mat.emissive_factor.rgb * mat.emissive_strength;
     }
 
+    // IBL
+    vec3 R = reflect(-V, normal);
+    const float MAX_REFLECTION_LOD = 4.0;
+    vec3 prefiltered_color = textureLod(prefilter_map, R, roughness * MAX_REFLECTION_LOD).rgb;
+    vec3 F = FresnelSchlickRoughness(max(dot(normal, V), 0.0), F0, roughness);
+    vec2 env_brdf = texture(brdf_lookup, vec2(max(dot(normal, V), 0.0), roughness)).rg;
+    vec3 specular = prefiltered_color * (F * env_brdf.x + env_brdf.y);
+
     vec3 kS = FresnelSchlickRoughness(clamp(dot(normal, V), 0.0, 1.0), F0, roughness);
     vec3 kD = 1.0 - kS;
     kD *= 1.0 - metallic;
     vec3 irradiance = texture(irradiance_map, normal).rgb;
     vec3 diffuse = irradiance * albedo;
-    vec3 ambient = (kD * diffuse);
+    // TODO: multiply by ao!
+    vec3 ambient = (kD * diffuse + specular);
 
     vec3 color = light_out + emissive + ambient;
     // color = color / (color + vec3(1.0));

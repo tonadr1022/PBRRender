@@ -16,6 +16,19 @@ float RadicalInverse_VdC(uint bits);
 vec2 Hammersley(uint i, uint N);
 vec3 ImportanceSampleGGX(vec2 Xi, vec3 N, float roughness);
 
+float DistributionGGX(vec3 N, vec3 H, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH * NdotH;
+
+    float nom = a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+
+    return nom / denom;
+}
+
 void main() {
     vec3 N = normalize(fs_in.world_pos);
     vec3 R = N;
@@ -32,12 +45,25 @@ void main() {
 
         float NdotL = max(dot(N, L), 0.0);
         if (NdotL > 0.0) {
-            prefiltered_color += texture(env_map, L).rgb * NdotL;
+            float D = DistributionGGX(N, H, roughness);
+            float NdotH = max(dot(N, H), 0.0);
+            float HdotV = max(dot(H, V), 0.0);
+            float pdf = D * NdotH / (4.0 * HdotV) + 0.0001;
+            // TODO: extract into uniform
+            float resolution = 512.0;
+            float sa_texel = 4.0 * PI / (6.0 * resolution * resolution);
+            float sa_sample = 1.0 / (float(SAMPLE_COUNT) * pdf + 0.0001);
+            float mip_level = roughness == 0.0 ? 0.0 : 0.5 * log2(sa_sample / sa_texel);
+
+            prefiltered_color += textureLod(env_map, L, mip_level).rgb * NdotL;
+
+            //prefiltered_color += texture(env_map, L).rgb * NdotL;
             total_weight += NdotL;
         }
     }
 
     prefiltered_color = prefiltered_color / total_weight;
+
     o_color = vec4(prefiltered_color, 1.0);
 }
 

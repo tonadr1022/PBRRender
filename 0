@@ -29,9 +29,6 @@ void CubeMapConverter::Init() {
   gl::ShaderManager::Get().AddShader(
       "env_map", {{GET_SHADER_PATH("env_map.vs.glsl"), gl::ShaderType::kVertex, {}},
                   {GET_SHADER_PATH("env_map.fs.glsl"), gl::ShaderType::kFragment, {}}});
-  gl::ShaderManager::Get().AddShader(
-      "brdf_lookup", {{GET_SHADER_PATH("ibl/brdf.vs.glsl"), gl::ShaderType::kVertex, {}},
-                      {GET_SHADER_PATH("ibl/brdf.fs.glsl"), gl::ShaderType::kFragment, {}}});
 
   cube_pos_only_vao.Init();
   cube_pos_only_vao.EnableAttribute<float>(0, 3, 0);
@@ -72,26 +69,9 @@ void CubeMapConverter::Init() {
                                                   .min_filter = GL_LINEAR_MIPMAP_LINEAR,
                                                   .mag_filter = GL_LINEAR,
                                                   .gen_mipmaps = true});
-
-  quad_vao_.Init();
-  quad_vao_.EnableAttribute<float>(0, 3, offsetof(PosTexVertex, position));
-  quad_vao_.EnableAttribute<float>(1, 2, offsetof(PosTexVertex, tex_coords));
-
-  const std::array<PosTexVertex, 4> quad_vertices_full = {
-      {// positions        // texture Coords
-       {glm::vec3{-1, 1, 0.0f}, glm::vec2{0.0f, 1.0f}},
-       {glm::vec3{-1, -1, 0.0f}, glm::vec2{0.0f, 0.0f}},
-       {glm::vec3{1, 1, 0.0f}, glm::vec2{1.0f, 1.0f}},
-       {glm::vec3{1, -1, 0.0f}, glm::vec2{1.0f, 0.0f}}}};
-  std::vector<uint32_t> indices = {0, 1, 2, 2, 1, 3};
-  std::vector<PosTexVertex> vertices = {quad_vertices_full.begin(), quad_vertices_full.end()};
-  quad_vbo_.Init(sizeof(Vertex) * 4, 0, vertices.data());
-  quad_ebo_.Init(sizeof(uint32_t) * 6, 0, indices.data());
-  quad_vao_.AttachVertexBuffer(quad_vbo_.Id(), 0, 0, sizeof(Vertex));
-  quad_vao_.AttachElementBuffer(quad_ebo_.Id());
 }
 
-void CubeMapConverter::RenderEquirectangularEnvMap(const gl::Texture& texture) {
+void CubeMapConverter::RenderEquirectangularEnvMap(const gl::Texture& texture) const {
   // put cube exactly in perspective
   const glm::mat4 capture_proj_matrix = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
   // view matrices look from the center at each side of the cube
@@ -166,7 +146,6 @@ void CubeMapConverter::RenderEquirectangularEnvMap(const gl::Texture& texture) {
   }
 
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  RenderBRDFLookupTexture();
 }
 
 void CubeMapConverter::Draw(const gl::Texture& tex) const {
@@ -190,7 +169,6 @@ void CubeMapConverter::Draw(const gl::Texture& tex) const {
 void CubeMapConverter::DrawPrefilter() const { Draw(prefilter_map); }
 void CubeMapConverter::DrawIrradiance() const { Draw(irradiance_map); }
 void CubeMapConverter::Draw() const { Draw(env_cube_map); }
-void CubeMapConverter::DrawBRDFTexture() {}
 
 void CubeMapConverter::RenderBRDFLookupTexture() {
   constexpr const glm::ivec2 kBrdfLookupDims = {512, 512};
@@ -205,12 +183,4 @@ void CubeMapConverter::RenderBRDFLookupTexture() {
                              kBrdfLookupDims.y);
   glNamedFramebufferTexture2DEXT(capture_fbo_, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                                  brdf_lookup_tex.Id(), 0);
-
-  glViewport(0, 0, kBrdfLookupDims.x, kBrdfLookupDims.y);
-  gl::Shader brdf_shader = gl::ShaderManager::Get().GetShader("brdf_lookup").value();
-  brdf_shader.Bind();
-  quad_vao_.Bind();
-  glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }

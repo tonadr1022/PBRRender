@@ -22,6 +22,11 @@ struct Vertex {
   glm::vec2 uv;
 };
 
+struct PosTexVertex {
+  glm::vec3 position;
+  glm::vec2 tex_coords;
+};
+
 struct VertexPosOnly {
   glm::vec3 pos;
 };

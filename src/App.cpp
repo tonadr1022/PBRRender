@@ -102,7 +102,8 @@ void App::Run() {
   player_.LookAt({0, 0, 0});
 
   // OnModelChange("/home/tony/abeautifulgame.glb");
-  OnModelChange("/home/tony/toycar.glb");
+  // OnModelChange("/home/tony/toycar.glb");
+  OnModelChange("/home/tony/glTF-Sample-Assets/Models/ToyCar/glTF/ToyCar.gltf");
   // OnModelChange("/home/tony/glTF-Sample-Assets/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
 
   uint64_t curr_time = SDL_GetPerformanceCounter();
