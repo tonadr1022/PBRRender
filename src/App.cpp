@@ -36,8 +36,8 @@ App::App()
 
 namespace {
 
-bool point_lights_enabled{true};
-bool directional_light_enabled{true};
+bool point_lights_enabled{false};
+bool directional_light_enabled{false};
 Model* active_model{};
 AssetHandle model_handle{};
 LightsInfo lights_info{.directional_dir = glm::vec3{0, -1, 0}, .directional_color = glm::vec3(1)};
@@ -134,6 +134,13 @@ void App::Run() {
     window_.PollEvents();
     window_.StartRenderFrame(imgui_enabled_);
     player_.Update(dt);
+    static float scale = 1.0f;
+
+    if (ImGui::SliderFloat("Scale", &scale, 0.1, 20)) {
+      renderer_.ResetStaticDrawCommands();
+      renderer_.SubmitStaticModel(*active_model, glm::scale(glm::mat4(1), glm::vec3(scale)));
+    }
+
     RenderInfo render_info;
     if (cam_index != -1 && active_model != nullptr) {
       CameraData& cam = active_model->camera_data[cam_index];
@@ -166,11 +173,12 @@ void App::Run() {
     shader.SetBool("directional_light_enabled", directional_light_enabled);
     shader.SetVec3("u_directional_dir", lights_info.directional_dir);
     shader.SetVec3("u_directional_color", lights_info.directional_color);
-    renderer_.DrawStaticOpaque(render_info);
     cube_map_converter.irradiance_map.Bind(0);
-    // cube_map_converter.Draw();
-    // cube_map_converter.DrawIrradiance();
-    cube_map_converter.DrawPrefilter();
+    cube_map_converter.prefilter_map.Bind(1);
+    cube_map_converter.brdf_lookup_tex.Bind(2);
+    renderer_.DrawStaticOpaque(render_info);
+
+    cube_map_converter.Draw();
 
     if (imgui_enabled_) {
       OnImGui();

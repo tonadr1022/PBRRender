@@ -37,8 +37,8 @@ struct VertexPosOnly {
 enum MaterialFlags : uint32_t {
   kNone = 0,
   kMetallicRoughness = 1 << 0,
-  kOcclusionRoughnessMetallic = 1 << 2,
-  kAlphaMaskOn = 1 << 3,
+  kOcclusionRoughnessMetallic = 1 << 1,
+  kAlphaMaskOn = 1 << 2,
 };
 
 struct alignas(16) Material {

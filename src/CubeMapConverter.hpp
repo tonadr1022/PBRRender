@@ -20,7 +20,7 @@ struct CubeMapConverter {
   gl::Buffer<VertexPosOnly> cube_pos_only_vbo;
 
   // TODO: be specific and move to impl file
-  glm::ivec2 dims{512, 512};
+  glm::ivec2 dims{1024, 1024};
   gl::Texture env_cube_map;
   gl::Texture irradiance_map;
   gl::Texture prefilter_map;

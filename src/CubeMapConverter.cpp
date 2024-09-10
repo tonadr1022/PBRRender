@@ -7,10 +7,11 @@
 #include "gl/ShaderManager.hpp"
 #include "gl/Texture.hpp"
 #include "pch.hpp"
+#include "types.hpp"
 
 namespace {
-constexpr glm::ivec2 kIrradianceDims = {32, 32};
-constexpr glm::ivec2 kPrefilterDims = {128, 128};
+constexpr glm::ivec2 kIrradianceDims = {128, 128};
+constexpr glm::ivec2 kPrefilterDims = {256, 256};
 
 }  // namespace
 void CubeMapConverter::Init() {
@@ -85,9 +86,9 @@ void CubeMapConverter::Init() {
        {glm::vec3{1, -1, 0.0f}, glm::vec2{1.0f, 0.0f}}}};
   std::vector<uint32_t> indices = {0, 1, 2, 2, 1, 3};
   std::vector<PosTexVertex> vertices = {quad_vertices_full.begin(), quad_vertices_full.end()};
-  quad_vbo_.Init(sizeof(Vertex) * 4, 0, vertices.data());
+  quad_vbo_.Init(sizeof(PosTexVertex) * 4, 0, vertices.data());
   quad_ebo_.Init(sizeof(uint32_t) * 6, 0, indices.data());
-  quad_vao_.AttachVertexBuffer(quad_vbo_.Id(), 0, 0, sizeof(Vertex));
+  quad_vao_.AttachVertexBuffer(quad_vbo_.Id(), 0, 0, sizeof(PosTexVertex));
   quad_vao_.AttachElementBuffer(quad_ebo_.Id());
 }
 
@@ -147,7 +148,7 @@ void CubeMapConverter::RenderEquirectangularEnvMap(const gl::Texture& texture) {
   prefilter_shader.Bind();
   prefilter_shader.SetMat4("u_projection", capture_proj_matrix);
   env_cube_map.Bind(0);
-  constexpr const uint32_t kMaxMipLevels = 5;
+  constexpr const uint32_t kMaxMipLevels = 6;
   for (uint32_t mip = 0; mip < kMaxMipLevels; ++mip) {
     uint32_t mip_width = kPrefilterDims.x * std::pow(0.5, mip);
     uint32_t mip_height = kPrefilterDims.y * std::pow(0.5, mip);
@@ -193,24 +194,25 @@ void CubeMapConverter::Draw() const { Draw(env_cube_map); }
 void CubeMapConverter::DrawBRDFTexture() {}
 
 void CubeMapConverter::RenderBRDFLookupTexture() {
-  constexpr const glm::ivec2 kBrdfLookupDims = {512, 512};
+  constexpr const glm::ivec2 kBrdfLookupDims = {1024, 1024};
   brdf_lookup_tex.Load(gl::Tex2DCreateInfoEmpty{.dims = kBrdfLookupDims,
                                                 .wrap_s = GL_CLAMP_TO_EDGE,
                                                 .wrap_t = GL_CLAMP_TO_EDGE,
-                                                .internal_format = GL_RG16F,
+                                                .internal_format = GL_RG16,
                                                 .min_filter = GL_LINEAR,
                                                 .mag_filter = GL_LINEAR});
+
+  gl::Shader brdf_shader = gl::ShaderManager::Get().GetShader("brdf_lookup").value();
+  brdf_shader.Bind();
+  quad_vao_.Bind();
   glBindFramebuffer(GL_FRAMEBUFFER, capture_fbo_);
   glNamedRenderbufferStorage(capture_rbo_, GL_DEPTH_COMPONENT24, kBrdfLookupDims.x,
                              kBrdfLookupDims.y);
   glNamedFramebufferTexture2DEXT(capture_fbo_, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                                  brdf_lookup_tex.Id(), 0);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   glViewport(0, 0, kBrdfLookupDims.x, kBrdfLookupDims.y);
-  gl::Shader brdf_shader = gl::ShaderManager::Get().GetShader("brdf_lookup").value();
-  brdf_shader.Bind();
-  quad_vao_.Bind();
   glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }

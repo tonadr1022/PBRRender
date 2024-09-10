@@ -50,7 +50,7 @@ void main() {
             float HdotV = max(dot(H, V), 0.0);
             float pdf = D * NdotH / (4.0 * HdotV) + 0.0001;
             // TODO: extract into uniform
-            float resolution = 512.0;
+            float resolution = 1024.0;
             float sa_texel = 4.0 * PI / (6.0 * resolution * resolution);
             float sa_sample = 1.0 / (float(SAMPLE_COUNT) * pdf + 0.0001);
             float mip_level = roughness == 0.0 ? 0.0 : 0.5 * log2(sa_sample / sa_texel);
